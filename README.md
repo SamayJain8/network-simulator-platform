@@ -1,8 +1,8 @@
-# 🌐 Distributed Network Simulator Platform
+#  Distributed Network Simulator Platform
 
 An observable, multi-service networked system simulator built from scratch. This project incrementally implements core OSI layer concepts (from raw TCP sockets to multi-hop routing) as a modular C++ engine, integrated with a Python-based predictive AI and a real-time React dashboard.
 
-## 🏗 System Architecture
+## System Architecture
 
 The platform follows a modern microservices architecture, orchestrated via Docker.
 
@@ -11,7 +11,7 @@ The platform follows a modern microservices architecture, orchestrated via Docke
 3. **Intelligence Layer (Python / FastAPI):** An AI microservice that ingests telemetry data to predict node failures and optimize routing paths dynamically.
 4. **Visualization (React):** A frontend dashboard displaying real-time network topologies and simulated traffic flows.
 
-## 🚀 Incremental Roadmap (Core Engine)
+## Incremental Roadmap (Core Engine)
 
 The core simulator is built phase-by-phase, mapping to fundamental Computer Science and Networking concepts:
 
@@ -24,14 +24,14 @@ The core simulator is built phase-by-phase, mapping to fundamental Computer Scie
 * **Phase 7: Observability** - Multi-threaded background monitoring, event queues, and incident correlation.
 * **Phase 8: Distributed Systems** - Load balancing and failover simulation.
 
-## 🛠 Tech Stack
+## Tech Stack
 
 * **Systems / Core:** C++20, POSIX Sockets, Pthreads, CMake
 * **Intelligence:** Python 3.11, FastAPI
 * **Frontend:** React, Tailwind CSS
 * **Infrastructure:** Docker, Docker Compose, Git (Conventional Commits)
 
-## 💡 Engineering Principles
+##  Engineering Principles
 
 * **Zero-Cost Abstractions:** System components are decoupled but highly optimized for performance.
 * **Observability First:** Monitoring is built into the transport engine, not bolted on as an afterthought.

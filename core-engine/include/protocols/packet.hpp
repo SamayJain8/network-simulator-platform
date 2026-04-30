@@ -1,28 +1,31 @@
-#ifndef NETWORK_SIM_PACKET_HPP
-#define NETWORK_SIM_PACKET_HPP
+#ifndef PACKET_HPP
+#define PACKET_HPP
 
 #include <vector>
 #include <cstdint>
 
-namespace network_sim::protocols {
-
 /**
- * @brief Represents a Data Packet in the simulator.
- * Located in: include/protocols/packet.hpp
+ * @brief Represents the Data Link/Network Layer Packet.
+ * This is the core unit of data moving through your simulator.
  */
 struct Packet {
-    // Header (Fixed size)
-    uint32_t payload_size; 
-    uint8_t type;          
+    // HEADER (5 Bytes total)
+    uint32_t payload_size; // 4 Bytes: How much data is following?
+    uint8_t type;          // 1 Byte: Is this DATA (0x01) or CONTROL (0x02)?
 
-    // Data (Variable size)
+    // PAYLOAD (Variable)
     std::vector<uint8_t> payload;
 
-    // Phase 2 logic to be implemented tomorrow
+    /**
+     * @brief Transforms the struct into a 'Wire Format' (Binary)
+     * Must handle Little-Endian (Mac M2) to Big-Endian (Network) conversion.
+     */
     std::vector<uint8_t> serialize() const;
+
+    /**
+     * @brief Reconstructs a Packet from a raw stream of bytes.
+     */
     static Packet deserialize(const std::vector<uint8_t>& buffer);
 };
 
-} // namespace network_sim::protocols
-
-#endif
+#endif // PACKET_HPP

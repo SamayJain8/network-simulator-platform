@@ -1,47 +1,44 @@
-# Network Simulator Platform
+# Distributed Network Simulator Platform
 
-An observable, multi-service networked system simulator built from scratch. This project incrementally implements core OSI layer concepts (from raw bare-metal TCP sockets to multi-hop routing) as a modular C++ engine, integrated with a Python-based intelligence service and a real-time React dashboard.
+A custom, multi-service network simulator built from scratch to model OSI layer interactions, multi-hop routing, and network fault tolerance. 
+
+The project is structured as a monorepo containing a bare-metal C++20 transport engine, integrated with a Python/FastAPI telemetry service and a React visualization dashboard.
 
 ## System Architecture
 
-The platform follows a modern microservices architecture, orchestrated via Docker.
+The platform utilizes a microservices architecture orchestrated via Docker Compose:
 
-1. **Core Engine (C++20):** A multi-threaded, highly optimized network simulator that handles raw socket I/O, packet encapsulation, and multi-hop routing. Built with strict RAII principles and custom memory management.
-2. **Observability Bridge (C++):** An embedded HTTP server within the core engine that acts as a central event bus, streaming live metrics (latency, throughput, queue congestion).
-3. **Intelligence Layer (Python / FastAPI):** A backend microservice that ingests telemetry data to predict node failures and optimize routing paths dynamically.
+1. **Core Engine (C++20):** A multi-threaded network simulator handling raw POSIX socket I/O and packet encapsulation. Built to avoid unnecessary memory allocations by utilizing **zero-copy serialization** (`std::span` and explicit memory offsets).
+2. **Telemetry Bus (C++):** A background monitoring thread that reads from a **lock-free circular buffer** (`std::atomic`). This allows the engine to stream latency and throughput metrics without introducing mutex bottlenecks to the main packet-processing thread.
+3. **Intelligence Layer (Python / FastAPI):** An asynchronous service that ingests the C++ metrics stream. It implements a **Circuit Breaker pattern** to dynamically recalculate routing paths and prevent retry-storms when simulated nodes fail.
 4. **Visualization (React):** A frontend dashboard displaying real-time network topologies and simulated traffic flows.
+
+## Engineering Principles
+
+* **Hardware-Aware Memory Safety:** Optimized specifically for ARM Unified Memory architectures using zero-copy serialization and explicit memory offsets to prevent struct padding corruption.
+* **Lock-Free Concurrency:** Thread safety is guaranteed against ARM's weak memory ordering using atomic operations and memory barriers, avoiding standard slow mutexes.
+* **Observability First:** Monitoring is built directly into the transport engine via a dedicated background thread, not bolted on as an afterthought.
 
 ## Incremental Roadmap
 
-This project is divided into Two Major Acts: the high-performance C++ Engine, and the Python/React Microservices.
+This project is executed in two major phases: the high-performance C++ Engine, and the Python/React Microservices integration.
 
 ### ACT 1: The Core Engine (C++20)
-The core simulator is built phase-by-phase, prioritizing memory efficiency and zero-cost abstractions:
+* [x] **Phase 1: Communication Core** - RAII POSIX socket abstractions, TCP client/server, and robust zombie-socket prevention (`SO_REUSEADDR`).
+* [ ] **Phase 2: Layered Encapsulation** - Zero-Copy binary serialization handling Network Byte Order (Endianness) and memory alignment.
+* [ ] **Phase 3: Link Layer** - In-memory ARP cache with custom LRU eviction logic.
+* [ ] **Phase 4: Application Protocols** - Custom HTTP-like text parser for GET/POST commands and CRLF reading.
+* [ ] **Phase 5: Network Layer** - Subnetting bitwise logic and CIDR notation routing restrictions.
+* [ ] **Phase 6: Multi-Hop Routing** - Link-State router implementation using Dijkstra's Algorithm via Min-Heaps.
+* [ ] **Phase 7: Observability Bridge** - Lock-free `std::atomic` circular buffer for background metric extraction.
+* [ ] **Phase 8: Fault Tolerance** - Implementation of the Circuit Breaker pattern for dynamic node failover.
 
-* [x] **Phase 1: Communication Core** - RAII POSIX socket abstractions, TCP client/server, and robust OS-level error handling (patched `SO_REUSEADDR` to prevent OS zombie sockets).
-* [ ] **Phase 2: Layered Encapsulation & Serialization** - Implementing high-performance **Binary Serialization** using tightly packed C++ `structs` and explicit memory offsets for zero-overhead data transfer.
-* [ ] **Phase 3: Link Layer** - Node IP/MAC identity and ARP cache simulation.
-* [ ] **Phase 4: Application Protocols** - Custom HTTP-like request/response handling.
-* [ ] **Phase 5: Addressing & Subnets** - IP assignment, subnet isolation, and DNS mapping.
-* [ ] **Phase 6: Routing (Applied DSA)** - Routing tables, priority queue management, and shortest-path multi-hop forwarding using graph traversal algorithms.
-* [ ] **Phase 7: Observability Bridge** - Implementing C++ multi-threading with lock-free circular queues (`std::atomic`). This thread drains high-speed binary traffic, converts summaries to JSON, and streams them out without blocking the main engine.
-* [ ] **Phase 8: Distributed Systems** - Load balancing and failover simulation.
+### ACT 2: Intelligence & Visualization
+* [ ] **Phase 9: AI Telemetry Analysis** - FastAPI service to ingest metrics and predict congestion.
+* [ ] **Phase 10: Real-Time Dashboard** - React UI to plot routing topologies dynamically.
+* [ ] **Phase 11: Orchestration** - Full containerization via Docker Compose.
 
-### ACT 2: The Intelligence & Visualization Layers
-* [ ] **Step 9: Intelligence Layer (Python/FastAPI)** - Ingests telemetry to predict node failures, using discrete-event clock synchronization to maintain parity with the C++ engine.
-* [ ] **Step 10: Visualization Layer (React)** - Frontend dashboard to fetch live topologies and plot routing paths dynamically.
-* [ ] **Step 11: Infrastructure (Docker)** - Docker Compose orchestration to spin up the monorepo as a unified, isolated cluster.
-
-## Tech Stack
-
-* **Systems / Core:** C++20, POSIX Sockets, Pthreads, CMake, Binary Serialization
-* **Intelligence:** Python 3.11, FastAPI
-* **Frontend:** React, Tailwind CSS
-* **Infrastructure:** Docker, Docker Compose, Git
-
-## Production-Ready Monorepo Structure
-
-This project utilizes a monorepo approach to isolate microservices while maintaining unified version control.
+## Monorepo Structure
 
 ```text
 network-simulator-platform/

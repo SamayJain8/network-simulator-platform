@@ -47,11 +47,11 @@ private:
     }
 };
 
-// High-level Connection Abstraction
+// High-level Connection Abstraction and
 class Connection {
 public:
     // Factory method to establish a TCP connection
-    static std::unique_ptr<Connection> connect_to(const std::string& ip, uint16_t port);
+    static std::unique_ptr<Connection>connect_to(const std::string& ip, uint16_t port);
     
     // Constructor takes ownership of an active socket
     explicit Connection(SocketFD&& socket);

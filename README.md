@@ -87,9 +87,9 @@ network-simulator-platform/
 
 ``` ## Engineering Principles
 
-* **Zero-Cost Abstractions:** System components are decoupled but highly optimized for performance.
-* **Observability First:** Monitoring is built into the transport engine, not bolted on as an afterthought.
-* **Memory Safety:** Strict adherence to modern C++ paradigms (smart pointers, RAII) to prevent file descriptor and memory leaks.
+**Zero-Cost Abstractions:** System components are decoupled but highly optimized for performance.
+**Observability First:** Monitoring is built into the transport engine, not bolted on as an afterthought.
+ **Memory Safety:** Strict adherence to modern C++ paradigms (smart pointers, RAII) to prevent file descriptor and memory leaks.
 
 
 

@@ -8,7 +8,7 @@ namespace netsim::core {
 struct PacketHeader {
     uint8_t version;    // 1 byte
     uint8_t type;       // 1 byte (0: Data, 1: ACK, 2: Control)
-    uint32_t length;    // 4 bytes (Size of payload)
+    uint32_t length;    // 4 bytes (i's the Size of payload)
 };
 #pragma pack(pop)
 
@@ -16,6 +16,7 @@ class Packet {
 public:
     PacketHeader header;
     std::vector<uint8_t> payload;
+
 
     Packet(uint8_t msg_type, const std::vector<uint8_t>& data);
 
@@ -26,4 +27,4 @@ public:
     static Packet deserialize(const std::vector<uint8_t>& raw_data);
 };
 
-} // namespace netsim::core
+} // namespace netsim::corea

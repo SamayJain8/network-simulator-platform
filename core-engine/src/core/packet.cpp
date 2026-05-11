@@ -44,7 +44,7 @@ Packet Packet::deserialize(const std::vector<uint8_t>& raw_data) {
     // 3. THE FIX: Convert from Network Order (Big) to Host Order (Little)
     uint32_t host_len = ntohl(net_len);
 
-    // 4. Integrity Check: Does the total size match the header's claim?
+    // 4. Integrity Check: Does the total size match the header's claim??
     if (raw_data.size() < 6 + host_len) {
         throw std::runtime_error("Packet payload size mismatch: corrupted stream");
     }

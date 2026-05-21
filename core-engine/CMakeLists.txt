@@ -1,25 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
-project(NetworkSimulatorCore VERSION 1.0.0 LANGUAGES CXX)
+project(NetworkSimulatorCore LANGUAGES CXX)
 
-# Enforce Modern C++
 set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
-
-# Production-grade compiler flags (Apple Clang / M2 Optimized)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wpedantic -Werror")
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -mcpu=apple-m2 -flto -DNDEBUG")
-set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fno-omit-frame-pointer -fsanitize=address,undefined")
-
-# Include directories mapping to our modular design
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-# Find threading library (Crucial for Phase 7 Observability)
 find_package(Threads REQUIRED)
 
-# Core Library Definition
-add_library(core_lib src/core/connection.cpp src/core/tcp_server.cpp)
+# 1. LIBRARY: The code 'owner'. 
+# All logic files (.cpp) go here, and ONLY here.
+add_library(core_lib STATIC
+    src/core/connection.cpp
+    src/core/tcp_server.cpp
+    src/core/packet.cpp
+    src/network/arp.cpp
+)
 
-# Main Executable
+# 2. EXECUTABLE: The 'consumer'.
+# ONLY main.cpp goes here. 
 add_executable(network_core src/main/controller.cpp)
+
+# 3. LINK: Connect the executable to the library.
 target_link_libraries(network_core PRIVATE core_lib Threads::Threads)

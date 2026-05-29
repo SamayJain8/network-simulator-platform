@@ -9,89 +9,80 @@ The project is structured as a monorepo containing a bare-metal C++20 transport 
 The platform utilizes a microservices architecture orchestrated via Docker Compose:
 
 1. **Core Engine (C++20):** A multi-threaded network simulator handling raw POSIX socket I/O and packet encapsulation. Built to avoid unnecessary memory allocations by utilizing **zero-copy serialization** (`std::span` and explicit memory offsets).
-2. **Telemetry Bus (C++):** A background monitoring thread that reads from a **lock-free circular buffer** (`std::atomic`). This allows the engine to stream latency and throughput metrics without introducing mutex bottlenecks to the main packet-processing thread.
-3. **Intelligence Layer (Python / FastAPI):** An asynchronous service that ingests the C++ metrics stream. It implements a **Circuit Breaker pattern** to dynamically recalculate routing paths and prevent retry-storms when simulated nodes fail.
-4. **Visualization (React):** A frontend dashboard displaying real-time network topologies and simulated traffic flows.
+2. **Telemetry Bus (C++):** A background monitoring thread that reads from a cache-aligned **lock-free circular buffer** (`std::atomic`). This allows the engine to stream latency and throughput metrics without introducing mutex bottlenecks to the main packet-processing thread.
+3. **Intelligence Layer (Python / FastAPI):** An asynchronous service that ingests the C++ metrics stream. It implements a **Circuit Breaker pattern** to dynamically recalculate routing paths and prevent retry-storms when simulated nodes fail. It utilizes a **Holt's Linear Trend model** for predictive congestion and bottleneck forecasting.
+4. **Visualization (React):** A frontend dashboard displaying real-time network topologies and simulated traffic flows using immediate-mode **HTML5 Canvas rendering** to bypass Virtual DOM rendering limits.
 
 ## Engineering Principles
 
-* **Hardware-Aware Memory Safety:** Optimized specifically for ARM Unified Memory architectures using zero-copy serialization and explicit memory offsets to prevent struct padding corruption.
-* **Lock-Free Concurrency:** Thread safety is guaranteed against ARM's weak memory ordering using atomic operations and memory barriers, avoiding standard slow mutexes.
-* **Observability First:** Monitoring is built directly into the transport engine via a dedicated background thread, not bolted on as an afterthought.
+* **Zero-Cost Abstractions:** System components are decoupled but highly optimized for performance, utilizing compile-time evaluations to eliminate runtime overhead.
+* **Observability First:** Monitoring and telemetry collection are built directly into the transport engine's core loops, not bolted on as an afterthought.
+* **Hardware-Aware Memory Safety & Cache Alignment:** Optimized specifically for ARM Unified Memory architectures (Apple Silicon M2) using zero-copy serialization and explicit memory alignment (`alignas(64)`) to prevent false sharing and struct padding corruption.
+* **Lock-Free Concurrency:** Thread safety is guaranteed against ARM's weak memory ordering using atomic operations, Compare-And-Swap (CAS) loops, and acquire-release barriers, avoiding standard slow mutexes.
 
 ## Incremental Roadmap
 
-This project is executed in two major phases: the high-performance C++ Engine, and the Python/React Microservices integration.
+Every phase of development, including core transport layers and microservices orchestration, has been completed and verified:
 
 ### ACT 1: The Core Engine (C++20)
 * [x] **Phase 1: Communication Core** - RAII POSIX socket abstractions, TCP client/server, and robust zombie-socket prevention (`SO_REUSEADDR`).
-* [ ] **Phase 2: Layered Encapsulation** - Zero-Copy binary serialization handling Network Byte Order (Endianness) and memory alignment.
-* [ ] **Phase 3: Link Layer** - In-memory ARP cache with custom LRU eviction logic.
-* [ ] **Phase 4: Application Protocols** - Custom HTTP-like text parser for GET/POST commands and CRLF reading.
-* [ ] **Phase 5: Network Layer** - Subnetting bitwise logic and CIDR notation routing restrictions.
-* [ ] **Phase 6: Multi-Hop Routing** - Link-State router implementation using Dijkstra's Algorithm via Min-Heaps.
-* [ ] **Phase 7: Observability Bridge** - Lock-free `std::atomic` circular buffer for background metric extraction.
-* [ ] **Phase 8: Fault Tolerance** - Implementation of the Circuit Breaker pattern for dynamic node failover.
+* [x] **Phase 2: Layered Encapsulation** - Zero-copy binary packet serialization, network byte order conversions, and memory alignment.
+* [x] **Phase 3: Link Layer** - Address Resolution Protocol (ARP) implementation with an in-memory, $O(1)$ LRU cache eviction policy.
+* [x] **Phase 4: Application Protocols** - Deterministic, fragmented HTTP text parser and logical message serialization schemas.
+* [x] **Phase 5: Network Layer** - Bitwise subnet masking, CIDR notation validation, and local network boundary checks.
+* [x] **Phase 6: Multi-Hop Routing** - Link-State routing tables and Longest Prefix Match (LPM) route lookup driven by Dijkstra's shortest-path algorithm.
+* [x] **Phase 7: Observability Bridge** - Lock-free, cache-aligned SPSC telemetry queue and background aggregation thread.
+* [x] **Phase 8: Fault Tolerance** - Link-state Circuit Breaker integration and Exponential Backoff with Full Jitter delay calculations.
+* [x] **Concurrency Upgrade:** Lock-free, atomic Generic Cell Rate Algorithm (GCRA) rate limiter integration in the packet path.
 
 ### ACT 2: Intelligence & Visualization
-* [ ] **Phase 9: AI Telemetry Analysis** - FastAPI service to ingest metrics and predict congestion.
-* [ ] **Phase 10: Real-Time Dashboard** - React UI to plot routing topologies dynamically.
-* [ ] **Phase 11: Orchestration** - Full containerization via Docker Compose.
+* [x] **Phase 9: AI Telemetry Analysis** - Async FastAPI service with Pydantic v2 validation and real-time Holt's Linear Trend forecasting.
+* [x] **Phase 10: Real-Time Dashboard** - React UI with immediate-mode HTML5 Canvas rendering for high-frequency topology visualization.
+* [x] **Phase 11: Orchestration** - Containerization of all tiers using multi-stage builds and isolated network namespaces via Docker Compose.
 
 ## Monorepo Structure
 
 ```text
 network-simulator-platform/
 ├── README.md
-├── infra/                     # Container orchestration
+├── infra/                     # Container orchestration configurations
 │   ├── docker-compose.yml
-│   ├── core.Dockerfile
-│   ├── ai.Dockerfile
-│   └── dashboard.Dockerfile
-├── dashboard/                 # React Frontend
+│   ├── core.Dockerfile        # Multi-stage release C++ build
+│   ├── ai.Dockerfile          # Optimized Python slim runtime
+│   └── dashboard.Dockerfile   # Static assets served via Nginx alpine
+├── dashboard/                 # React UI Dashboard
 │   ├── package.json
 │   ├── src/
 │   └── public/
-├── ai-service/                # Python / FastAPI
+├── ai-service/                # Python / FastAPI Predictive Service
 │   ├── requirements.txt
 │   ├── main.py
 │   └── models/
-└── core-engine/               # C++ Network Simulator
+└── core-engine/               # C++20 Network Emulator Core
     ├── CMakeLists.txt
     ├── include/
     │   ├── core/
-    │   │   ├── connection.hpp # socket abstraction
-    │   │   ├── message.hpp    # logical message
-    │   │   └── packet.hpp     # binary layered packet
+    │   │   ├── connection.hpp # Socket abstraction
+    │   │   ├── message.hpp    # Logical message
+    │   │   └── packet.hpp     # Binary layered packet
     │   ├── network/
-    │   │   ├── node.hpp       # IP/MAC identity
-    │   │   ├── arp.hpp        # ARP cache
-    │   │   ├── addressing.hpp # subnet + DNS
-    │   │   └── router.hpp     # routing logic
+    │   │   ├── node.hpp       # IP/MAC identity & rate limiting
+    │   │   ├── arp.hpp        # LRU ARP cache
+    │   │   ├── addressing.hpp # Subnet mathematics
+    │   │   └── router.hpp     # Dijkstra & LPM routing
+    │   │   └── circuit_breaker.hpp # Link state monitors
     │   ├── protocols/
-    │   │   ├── protocol.hpp   # interface
-    │   │   └── http_sim.hpp   # HTTP-like protocol
+    │   │   ├── protocol.hpp   # Base protocol interface
+    │   │   └── http_sim.hpp   # HTTP FSM parser
     │   └── system/
-    │       ├── metrics.hpp    # latency, throughput
-    │       ├── monitor.hpp    # background monitoring
-    │       ├── event_queue.hpp# lock-free central event bus 
-    │       └── logger.hpp     # structured logging
+    │       ├── metrics.hpp    # Telemetry schema
+    │       ├── monitor.hpp    # Background metric aggregator
+    │       └── event_queue.hpp# Cache-aligned, lock-free SPSC queue
     ├── src/
     │   ├── core/
     │   ├── network/
     │   ├── protocols/
     │   ├── system/
     │   └── main/
-    │       └── controller.cpp # system orchestration
+    │       └── controller.cpp # Simulation test driver
     └── tests/
-
-``` ## Engineering Principles
-
-**Zero-Cost Abstractions:** System components are decoupled but highly optimized for performance.
-**Observability First:** Monitoring is built into the transport engine, not bolted on as an afterthought.
- **Memory Safety:** Strict adherence to modern C++ paradigms (smart pointers, RAII) to prevent file descriptor and memory leaks.
-
-
-
-
-

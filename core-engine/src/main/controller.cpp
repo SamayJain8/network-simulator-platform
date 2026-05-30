@@ -5,24 +5,87 @@
 #include <memory>
 #include <span>
 #include <unordered_map>
+#include <chrono>
+#include <thread>
 #include "core/packet.hpp"
 #include "network/arp.hpp"
 #include "protocols/http_sim.hpp"
 #include "network/addressing.hpp"
 #include "network/node.hpp"
 #include "network/router.hpp"
+#include "system/event_queue.hpp"
+#include "system/monitor.hpp"
+
+void test_lock_free_telemetry_bridge() {
+    std::cout << "[INFO] Commencing Phase 7: Lock-Free Telemetry Bridge validation...\n";
+
+    using namespace netsim::system;
+
+    // 1. Initialize lock-free SPSC Ring Buffer queue
+    SpscRingBuffer<MetricEvent, 1024> telemetry_queue;
+
+    // 2. Start telemetry monitor background thread
+    TelemetryMonitor monitor(telemetry_queue);
+    monitor.start();
+
+    // 3. Simulate high-speed packet logging (Producer Thread)
+    // We push 10 metric events representing packet transmission events
+    for (uint32_t i = 1; i <= 10; ++i) {
+        MetricEvent event{
+            static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()),
+            "RouterA",
+            "RouterB",
+            1000,           // 1000 bytes per packet
+            150,            // 150 ns simulated latency
+            false           // Not dropped
+        };
+        bool pushed = telemetry_queue.push(event);
+        assert(pushed == true);
+    }
+
+    // Push 2 dropped packet events
+    for (uint32_t i = 1; i <= 2; ++i) {
+        MetricEvent drop_event{
+            static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()),
+            "RouterA",
+            "RouterB",
+            0,
+            0,
+            true            // Dropped!
+        };
+        bool pushed = telemetry_queue.push(drop_event);
+        assert(pushed == true);
+    }
+
+    // 4. Wait briefly for the background thread to poll and aggregate metrics
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+    // 5. Retrieve stats and verify correctness
+    AggregatedMetrics stats = monitor.get_latest_metrics();
+
+    assert(stats.total_packets == 12);
+    assert(stats.dropped_packets == 2);
+    assert(stats.total_bytes == 10000); // 10 successful packets * 1000 bytes
+    assert(stats.average_latency_ns == 150.0);
+    assert(stats.throughput_kbps > 0.0); // Verifies rolling throughput calculated
+
+    std::cout << "[DEBUG] Total Packets Processed: " << stats.total_packets << "\n";
+    std::cout << "[DEBUG] Average Latency: " << stats.average_latency_ns << " ns\n";
+    std::cout << "[DEBUG] Rolling Throughput: " << stats.throughput_kbps << " kbps\n";
+
+    // 6. Stop monitor background thread
+    monitor.stop();
+    std::cout << "[SUCCESS] Phase 7: Lock-Free circular queue telemetry bridge validated.\n";
+}
 
 void test_dynamic_multi_hop_routing() {
     std::cout << "[INFO] Commencing Phase 6: Dynamic Multi-hop Link-State Routing tests...\n";
-
     using namespace netsim::network;
 
-    // 1. Setup simulated router identities and subnets
     Router router_a("RouterA", IPv4Address("10.0.1.1"), SubnetMask(24), "00:AA:00:11:11:11");
     Router router_b("RouterB", IPv4Address("10.0.2.1"), SubnetMask(24), "00:AA:00:22:22:22");
     Router router_c("RouterC", IPv4Address("10.0.3.1"), SubnetMask(24), "00:AA:00:33:33:33");
 
-    // Network addressing lookups for path construction
     std::unordered_map<std::string, IPv4Address> node_to_ip = {
         {"RouterA", IPv4Address("10.0.1.1")},
         {"RouterB", IPv4Address("10.0.2.1")},
@@ -35,8 +98,6 @@ void test_dynamic_multi_hop_routing() {
         {"RouterC", SubnetMask(24)}
     };
 
-    // 2. Scenario 1: Indirect pathway is faster (Alternative Route: RouterA -> RouterB -> RouterC)
-    // Link costs: A->B cost 1, B->C cost 2 (Path cost 3) vs. direct A->C cost 10 (Path cost 10)
     std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>> topology_graph_scenario_1 = {
         {"RouterA", {{"RouterB", 1}, {"RouterC", 10}}},
         {"RouterB", {{"RouterA", 1}, {"RouterC", 2}}},
@@ -44,16 +105,10 @@ void test_dynamic_multi_hop_routing() {
     };
 
     router_a.compute_routes(topology_graph_scenario_1, node_to_ip, node_to_mask);
-
-    // Look up route for a node in Router C's subnet (e.g., 10.0.3.100)
     auto route1 = router_a.lookup_route(IPv4Address("10.0.3.100"));
     assert(route1.first == true);
-    // Next hop must resolve to RouterB's IP ("10.0.2.1") since it lies along the cheaper path (Cost 3 vs 10)
     assert(route1.second == IPv4Address("10.0.2.1"));
-    std::cout << "[DEBUG] Route parsed through indirect path correctly: Next Hop -> " << route1.second.to_string() << "\n";
 
-    // 3. Scenario 2: Link update cost spike (Direct Route becomes faster: RouterA -> RouterC)
-    // Link cost B->C spikes to 15. Cheaper path is now direct A->C (Cost 10 vs 16)
     std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>> topology_graph_scenario_2 = {
         {"RouterA", {{"RouterB", 1}, {"RouterC", 10}}},
         {"RouterB", {{"RouterA", 1}, {"RouterC", 15}}},
@@ -61,12 +116,9 @@ void test_dynamic_multi_hop_routing() {
     };
 
     router_a.compute_routes(topology_graph_scenario_2, node_to_ip, node_to_mask);
-
     auto route2 = router_a.lookup_route(IPv4Address("10.0.3.100"));
     assert(route2.first == true);
-    // Next hop must now dynamically adjust to RouterC's IP ("10.0.3.1") since the indirect route cost increased
     assert(route2.second == IPv4Address("10.0.3.1"));
-    std::cout << "[DEBUG] Route dynamically recalculated to direct link: Next Hop -> " << route2.second.to_string() << "\n";
 
     std::cout << "[SUCCESS] Phase 6: Dynamic link-state Dijkstra routing engine validated.\n";
 }
@@ -100,7 +152,7 @@ void test_ipv4_subnetting_logic() {
     assert(host_node.is_local(local_target) == true);
     assert(host_node.is_local(remote_target) == false);
 
-    std::cout << "[SUCCESS] Phase 5: IPv4 mathematical subnet matching validated.\n";
+    std::cout << "[SUCCESS] Phase 5: IPv4 subnetting validated.\n";
 }
 
 void test_fragmented_http_parsing() {
@@ -183,6 +235,9 @@ int main() {
 
         // Run Phase 6 verification
         test_dynamic_multi_hop_routing();
+
+        // Run Phase 7 verification
+        test_lock_free_telemetry_bridge();
 
         std::cout << "\n[STATUS] All engine targets built and verified successfully.\n";
 

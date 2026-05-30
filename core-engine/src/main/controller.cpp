@@ -4,23 +4,81 @@
 #include <string>
 #include <memory>
 #include <span>
+#include <unordered_map>
 #include "core/packet.hpp"
 #include "network/arp.hpp"
 #include "protocols/http_sim.hpp"
 #include "network/addressing.hpp"
 #include "network/node.hpp"
+#include "network/router.hpp"
 
-void test_ipv4_subnetting_logic() {
-    std::cout << "[INFO] Commencing Phase 5: Bitwise Subnet Mask validation tests...\n";
+void test_dynamic_multi_hop_routing() {
+    std::cout << "[INFO] Commencing Phase 6: Dynamic Multi-hop Link-State Routing tests...\n";
 
     using namespace netsim::network;
 
-    // 1. Verify safe binary parsing of dotted decimals
+    // 1. Setup simulated router identities and subnets
+    Router router_a("RouterA", IPv4Address("10.0.1.1"), SubnetMask(24), "00:AA:00:11:11:11");
+    Router router_b("RouterB", IPv4Address("10.0.2.1"), SubnetMask(24), "00:AA:00:22:22:22");
+    Router router_c("RouterC", IPv4Address("10.0.3.1"), SubnetMask(24), "00:AA:00:33:33:33");
+
+    // Network addressing lookups for path construction
+    std::unordered_map<std::string, IPv4Address> node_to_ip = {
+        {"RouterA", IPv4Address("10.0.1.1")},
+        {"RouterB", IPv4Address("10.0.2.1")},
+        {"RouterC", IPv4Address("10.0.3.1")}
+    };
+
+    std::unordered_map<std::string, SubnetMask> node_to_mask = {
+        {"RouterA", SubnetMask(24)},
+        {"RouterB", SubnetMask(24)},
+        {"RouterC", SubnetMask(24)}
+    };
+
+    // 2. Scenario 1: Indirect pathway is faster (Alternative Route: RouterA -> RouterB -> RouterC)
+    // Link costs: A->B cost 1, B->C cost 2 (Path cost 3) vs. direct A->C cost 10 (Path cost 10)
+    std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>> topology_graph_scenario_1 = {
+        {"RouterA", {{"RouterB", 1}, {"RouterC", 10}}},
+        {"RouterB", {{"RouterA", 1}, {"RouterC", 2}}},
+        {"RouterC", {{"RouterA", 10}, {"RouterB", 2}}}
+    };
+
+    router_a.compute_routes(topology_graph_scenario_1, node_to_ip, node_to_mask);
+
+    // Look up route for a node in Router C's subnet (e.g., 10.0.3.100)
+    auto route1 = router_a.lookup_route(IPv4Address("10.0.3.100"));
+    assert(route1.first == true);
+    // Next hop must resolve to RouterB's IP ("10.0.2.1") since it lies along the cheaper path (Cost 3 vs 10)
+    assert(route1.second == IPv4Address("10.0.2.1"));
+    std::cout << "[DEBUG] Route parsed through indirect path correctly: Next Hop -> " << route1.second.to_string() << "\n";
+
+    // 3. Scenario 2: Link update cost spike (Direct Route becomes faster: RouterA -> RouterC)
+    // Link cost B->C spikes to 15. Cheaper path is now direct A->C (Cost 10 vs 16)
+    std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>> topology_graph_scenario_2 = {
+        {"RouterA", {{"RouterB", 1}, {"RouterC", 10}}},
+        {"RouterB", {{"RouterA", 1}, {"RouterC", 15}}},
+        {"RouterC", {{"RouterA", 10}, {"RouterB", 15}}}
+    };
+
+    router_a.compute_routes(topology_graph_scenario_2, node_to_ip, node_to_mask);
+
+    auto route2 = router_a.lookup_route(IPv4Address("10.0.3.100"));
+    assert(route2.first == true);
+    // Next hop must now dynamically adjust to RouterC's IP ("10.0.3.1") since the indirect route cost increased
+    assert(route2.second == IPv4Address("10.0.3.1"));
+    std::cout << "[DEBUG] Route dynamically recalculated to direct link: Next Hop -> " << route2.second.to_string() << "\n";
+
+    std::cout << "[SUCCESS] Phase 6: Dynamic link-state Dijkstra routing engine validated.\n";
+}
+
+void test_ipv4_subnetting_logic() {
+    std::cout << "[INFO] Commencing Phase 5: Bitwise Subnet Mask validation tests...\n";
+    using namespace netsim::network;
+
     IPv4Address ip1("192.168.1.15");
     assert(ip1.to_string() == "192.168.1.15");
-    assert(ip1.to_u32() == 0xC0A8010F); // 192=C0, 168=A8, 1=01, 15=0F
+    assert(ip1.to_u32() == 0xC0A8010F);
 
-    // 2. Verify prefix parsing logic
     SubnetMask mask_slash_24(24);
     assert(mask_slash_24.to_string() == "255.255.255.0");
     assert(mask_slash_24.to_u32() == 0xFFFFFF00);
@@ -28,17 +86,14 @@ void test_ipv4_subnetting_logic() {
     SubnetMask mask_slash_16("255.255.0.0");
     assert(mask_slash_16.to_prefix_length() == 16);
 
-    // 3. Verify contiguous bit alignment limits
     try {
-        SubnetMask invalid_mask("255.255.0.255"); // Non-contiguous zero boundary gap
-        assert(false); // Should throw exception
+        SubnetMask invalid_mask("255.255.0.255");
+        assert(false);
     } catch (const std::invalid_argument& ex) {
         std::cout << "[DEBUG] Caught expected contiguous verification error: " << ex.what() << "\n";
     }
 
-    // 4. Verify Local Routing evaluation checks
     Node host_node("HostA", IPv4Address("10.0.0.10"), SubnetMask(24), "00:11:22:33:44:55");
-
     IPv4Address local_target("10.0.0.20");
     IPv4Address remote_target("10.0.1.20");
 
@@ -52,10 +107,10 @@ void test_fragmented_http_parsing() {
     std::cout << "[INFO] Commencing Phase 4: Fragmented HTTP State Machine parsing tests...\n";
     std::unique_ptr<netsim::protocols::Protocol> http_engine = std::make_unique<netsim::protocols::HttpSim>();
 
-  std::string raw_http_request = 
+    std::string raw_http_request = 
         "POST /submit-telemetry HTTP/1.1\r\n"
         "Host: localhost:8080\r\n"
-        "Content-Length: 19\r\n"  // Changed from 18 to 19
+        "Content-Length: 19\r\n"
         "\r\n"
         "cpu_load=42&temp=61";
 
@@ -125,6 +180,9 @@ int main() {
 
         // Run Phase 5 verification
         test_ipv4_subnetting_logic();
+
+        // Run Phase 6 verification
+        test_dynamic_multi_hop_routing();
 
         std::cout << "\n[STATUS] All engine targets built and verified successfully.\n";
 

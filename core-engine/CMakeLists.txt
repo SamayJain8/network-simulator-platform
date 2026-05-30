@@ -13,8 +13,9 @@ add_library(core_lib STATIC
     src/core/packet.cpp
     src/network/arp.cpp
     src/protocols/http_sim.cpp
-    src/network/addressing.cpp  # Added for Phase 5
-    src/network/node.cpp        # Added for Phase 5
+    src/network/addressing.cpp
+    src/network/node.cpp
+    src/network/router.cpp  # Added for Phase 6
 )
 
 # 2. EXECUTABLE: The 'consumer'.

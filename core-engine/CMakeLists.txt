@@ -16,7 +16,8 @@ add_library(core_lib STATIC
     src/network/addressing.cpp
     src/network/node.cpp
     src/network/router.cpp
-    src/system/monitor.cpp    # Added for Phase 7
+    src/system/monitor.cpp
+    src/network/circuit_breaker.cpp # Added for Phase 8
 )
 
 # 2. EXECUTABLE: The 'consumer'.

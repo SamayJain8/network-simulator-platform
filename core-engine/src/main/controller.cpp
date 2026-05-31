@@ -15,35 +15,96 @@
 #include "network/router.hpp"
 #include "system/event_queue.hpp"
 #include "system/monitor.hpp"
+#include "network/backoff.hpp"
+
+void test_fault_tolerance_pipeline() {
+    std::cout << "[INFO] Commencing Phase 8: Fault Tolerance & Circuit Breaker validation...\n";
+
+    using namespace netsim::network;
+
+    // 1. Initialize a 3-node network topology
+    Router router_a("RouterA", IPv4Address("10.0.1.1"), SubnetMask(24), "00:AA:00:11:11:11");
+    Router router_b("RouterB", IPv4Address("10.0.2.1"), SubnetMask(24), "00:AA:00:22:22:22");
+    Router router_c("RouterC", IPv4Address("10.0.3.1"), SubnetMask(24), "00:AA:00:33:33:33");
+
+    std::unordered_map<std::string, IPv4Address> node_to_ip = {
+        {"RouterA", IPv4Address("10.0.1.1")},
+        {"RouterB", IPv4Address("10.0.2.1")},
+        {"RouterC", IPv4Address("10.0.3.1")}
+    };
+
+    std::unordered_map<std::string, SubnetMask> node_to_mask = {
+        {"RouterA", SubnetMask(24)},
+        {"RouterB", SubnetMask(24)},
+        {"RouterC", SubnetMask(24)}
+    };
+
+    // Topology: A connects to B (Cost 1), B connects to C (Cost 2), and A connects directly to C (Cost 10)
+    std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>> graph = {
+        {"RouterA", {{"RouterB", 1}, {"RouterC", 10}}},
+        {"RouterB", {{"RouterA", 1}, {"RouterC", 2}}},
+        {"RouterC", {{"RouterA", 10}, {"RouterB", 2}}}
+    };
+
+    // Calculate initial routes (fastest route to Router C should be via Router B: cost 3)
+    router_a.compute_routes(graph, node_to_ip, node_to_mask);
+    auto initial_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
+    assert(initial_route.first == true);
+    assert(initial_route.second == IPv4Address("10.0.2.1")); // Via Router B
+    std::cout << "[DEBUG] Route initially confirmed via RouterB: Next Hop -> " << initial_route.second.to_string() << "\n";
+
+    // 2. Simulate packet losses on the link from A to B
+    // Threshold is set to 3 failures before tripping
+    router_a.record_link_failure("RouterB");
+    router_a.record_link_failure("RouterB");
+    assert(router_a.get_link_state("RouterB") == CircuitState::Closed); // 2 failures; still CLOSED
+
+    router_a.record_link_failure("RouterB"); // 3rd failure; trips to OPEN
+    assert(router_a.get_link_state("RouterB") == CircuitState::Open);
+    std::cout << "[DEBUG] Circuit Breaker successfully tripped to OPEN on link RouterA -> RouterB\n";
+
+    // 3. Trigger route recalculation. The router should automatically inflate the cost of the link to RouterB
+    // and failover to the direct link to RouterC (cost 10).
+    router_a.compute_routes(graph, node_to_ip, node_to_mask);
+    auto failover_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
+    assert(failover_route.first == true);
+    assert(failover_route.second == IPv4Address("10.0.3.1")); // Dynamically recalculated direct link to C
+    std::cout << "[DEBUG] Route successfully failed over: Next Hop -> " << failover_route.second.to_string() << "\n";
+
+    // 4. Verify Jitter-based Exponential Backoff calculations to prevent retry storms
+    Backoff backoff_policy(100, 2000); // Base: 100ms, Max: 2000ms
+    uint64_t delay_attempt_1 = backoff_policy.calculate_delay(1);
+    uint64_t delay_attempt_2 = backoff_policy.calculate_delay(2);
+    
+    // Delays should remain bounded by maximum timeout limit
+    assert(delay_attempt_1 <= 100);
+    assert(delay_attempt_2 <= 200);
+    std::cout << "[DEBUG] Calculated Jitter Backoff (Attempt 1): " << delay_attempt_1 << " ms\n";
+    std::cout << "[DEBUG] Calculated Jitter Backoff (Attempt 2): " << delay_attempt_2 << " ms\n";
+
+    std::cout << "[SUCCESS] Phase 8: Fault tolerance and dynamic failover validated.\n";
+}
 
 void test_lock_free_telemetry_bridge() {
     std::cout << "[INFO] Commencing Phase 7: Lock-Free Telemetry Bridge validation...\n";
-
     using namespace netsim::system;
 
-    // 1. Initialize lock-free SPSC Ring Buffer queue
     SpscRingBuffer<MetricEvent, 1024> telemetry_queue;
-
-    // 2. Start telemetry monitor background thread
     TelemetryMonitor monitor(telemetry_queue);
     monitor.start();
 
-    // 3. Simulate high-speed packet logging (Producer Thread)
-    // We push 10 metric events representing packet transmission events
     for (uint32_t i = 1; i <= 10; ++i) {
         MetricEvent event{
             static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()),
             "RouterA",
             "RouterB",
-            1000,           // 1000 bytes per packet
-            150,            // 150 ns simulated latency
-            false           // Not dropped
+            1000,
+            150,
+            false
         };
-        bool pushed = telemetry_queue.push(event);
-        assert(pushed == true);
+        assert(telemetry_queue.push(event) == true);
     }
 
-    // Push 2 dropped packet events
     for (uint32_t i = 1; i <= 2; ++i) {
         MetricEvent drop_event{
             static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()),
@@ -51,29 +112,20 @@ void test_lock_free_telemetry_bridge() {
             "RouterB",
             0,
             0,
-            true            // Dropped!
+            true
         };
-        bool pushed = telemetry_queue.push(drop_event);
-        assert(pushed == true);
+        assert(telemetry_queue.push(drop_event) == true);
     }
 
-    // 4. Wait briefly for the background thread to poll and aggregate metrics
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
-
-    // 5. Retrieve stats and verify correctness
     AggregatedMetrics stats = monitor.get_latest_metrics();
 
     assert(stats.total_packets == 12);
     assert(stats.dropped_packets == 2);
-    assert(stats.total_bytes == 10000); // 10 successful packets * 1000 bytes
+    assert(stats.total_bytes == 10000);
     assert(stats.average_latency_ns == 150.0);
-    assert(stats.throughput_kbps > 0.0); // Verifies rolling throughput calculated
+    assert(stats.throughput_kbps > 0.0);
 
-    std::cout << "[DEBUG] Total Packets Processed: " << stats.total_packets << "\n";
-    std::cout << "[DEBUG] Average Latency: " << stats.average_latency_ns << " ns\n";
-    std::cout << "[DEBUG] Rolling Throughput: " << stats.throughput_kbps << " kbps\n";
-
-    // 6. Stop monitor background thread
     monitor.stop();
     std::cout << "[SUCCESS] Phase 7: Lock-Free circular queue telemetry bridge validated.\n";
 }
@@ -238,6 +290,9 @@ int main() {
 
         // Run Phase 7 verification
         test_lock_free_telemetry_bridge();
+
+        // Run Phase 8 verification
+        test_fault_tolerance_pipeline();
 
         std::cout << "\n[STATUS] All engine targets built and verified successfully.\n";
 

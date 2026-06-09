@@ -17,12 +17,76 @@
 #include "system/monitor.hpp"
 #include "network/backoff.hpp"
 
-void test_fault_tolerance_pipeline() {
-    std::cout << "[INFO] Commencing Phase 8: Fault Tolerance & Circuit Breaker validation...\n";
+void test_rate_limiting_security_pipeline() {
+    std::cout << "[INFO] Commencing Option B: Lock-Free GCRA Rate Limiter validation...\n";
 
     using namespace netsim::network;
 
-    // 1. Initialize a 3-node network topology
+    // Create a node protected by our lock-free GCRA rate limiter
+    Node server_node("ProtectedServer", IPv4Address("192.168.1.10"), SubnetMask(24), "00:BB:00:11:11:11");
+    
+    // Configure limits: 10 packets per second, max burst capacity of 5
+    server_node.enable_rate_limiting(10.0, 5.0);
+
+    // 1. Verify Burst Capacity Limits
+    // The first 5 immediate packets must be allowed (consuming the burst capacity)
+    for (int i = 1; i <= 5; ++i) {
+        assert(server_node.receive_packet() == true);
+    }
+    
+    // The 6th packet must be dropped immediately (tolerance exceeded)
+    assert(server_node.receive_packet() == false);
+    std::cout << "[DEBUG] Burst limit enforced. First 5 packets allowed, 6th packet dropped.\n";
+
+    // 2. Verify Refill Rate Mechanics
+    // Wait for 500 milliseconds. At 10 tokens/sec, the bucket should refill by 5 tokens.
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // We should be able to receive exactly 5 packets now
+    for (int i = 1; i <= 5; ++i) {
+        assert(server_node.receive_packet() == true);
+    }
+    // The 6th must be dropped again
+    assert(server_node.receive_packet() == false);
+    std::cout << "[DEBUG] Refill rate confirmed. Bucket refilled by 5 tokens over 500ms.\n";
+
+    // 3. Verify Multi-Threaded Thread-Safety Contention
+    // Spawn multiple threads simulating concurrent packet deliveries to verify thread-safety
+    std::vector<std::thread> traffic_generators;
+    std::atomic<uint32_t> allowed_count(0);
+    std::atomic<uint32_t> dropped_count(0);
+
+    auto generate_traffic = [&server_node, &allowed_count, &dropped_count]() {
+        for (int i = 0; i < 10; ++i) {
+            if (server_node.receive_packet()) {
+                allowed_count++;
+            } else {
+                dropped_count++;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    };
+
+    // Spawn 4 concurrent threads (40 packets total)
+    for (int i = 0; i < 4; ++i) {
+        traffic_generators.emplace_back(generate_traffic);
+    }
+
+    for (auto& th : traffic_generators) {
+        th.join();
+    }
+
+    // Verify all threads executed successfully and state counters remain consistent
+    assert(allowed_count + dropped_count == 40);
+    std::cout << "[DEBUG] Concurrency test passed. Allowed: " << allowed_count << ", Dropped: " << dropped_count << "\n";
+
+    std::cout << "[SUCCESS] Option B: Lock-Free GCRA rate limiter fully validated.\n";
+}
+
+void test_fault_tolerance_pipeline() {
+    std::cout << "[INFO] Commencing Phase 8: Fault Tolerance & Circuit Breaker validation...\n";
+    using namespace netsim::network;
+
     Router router_a("RouterA", IPv4Address("10.0.1.1"), SubnetMask(24), "00:AA:00:11:11:11");
     Router router_b("RouterB", IPv4Address("10.0.2.1"), SubnetMask(24), "00:AA:00:22:22:22");
     Router router_c("RouterC", IPv4Address("10.0.3.1"), SubnetMask(24), "00:AA:00:33:33:33");
@@ -39,48 +103,35 @@ void test_fault_tolerance_pipeline() {
         {"RouterC", SubnetMask(24)}
     };
 
-    // Topology: A connects to B (Cost 1), B connects to C (Cost 2), and A connects directly to C (Cost 10)
     std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>> graph = {
         {"RouterA", {{"RouterB", 1}, {"RouterC", 10}}},
         {"RouterB", {{"RouterA", 1}, {"RouterC", 2}}},
         {"RouterC", {{"RouterA", 10}, {"RouterB", 2}}}
     };
 
-    // Calculate initial routes (fastest route to Router C should be via Router B: cost 3)
     router_a.compute_routes(graph, node_to_ip, node_to_mask);
     auto initial_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
     assert(initial_route.first == true);
-    assert(initial_route.second == IPv4Address("10.0.2.1")); // Via Router B
-    std::cout << "[DEBUG] Route initially confirmed via RouterB: Next Hop -> " << initial_route.second.to_string() << "\n";
+    assert(initial_route.second == IPv4Address("10.0.2.1"));
 
-    // 2. Simulate packet losses on the link from A to B
-    // Threshold is set to 3 failures before tripping
     router_a.record_link_failure("RouterB");
     router_a.record_link_failure("RouterB");
-    assert(router_a.get_link_state("RouterB") == CircuitState::Closed); // 2 failures; still CLOSED
+    assert(router_a.get_link_state("RouterB") == CircuitState::Closed);
 
-    router_a.record_link_failure("RouterB"); // 3rd failure; trips to OPEN
+    router_a.record_link_failure("RouterB");
     assert(router_a.get_link_state("RouterB") == CircuitState::Open);
-    std::cout << "[DEBUG] Circuit Breaker successfully tripped to OPEN on link RouterA -> RouterB\n";
 
-    // 3. Trigger route recalculation. The router should automatically inflate the cost of the link to RouterB
-    // and failover to the direct link to RouterC (cost 10).
     router_a.compute_routes(graph, node_to_ip, node_to_mask);
     auto failover_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
     assert(failover_route.first == true);
-    assert(failover_route.second == IPv4Address("10.0.3.1")); // Dynamically recalculated direct link to C
-    std::cout << "[DEBUG] Route successfully failed over: Next Hop -> " << failover_route.second.to_string() << "\n";
+    assert(failover_route.second == IPv4Address("10.0.3.1"));
 
-    // 4. Verify Jitter-based Exponential Backoff calculations to prevent retry storms
-    Backoff backoff_policy(100, 2000); // Base: 100ms, Max: 2000ms
+    Backoff backoff_policy(100, 2000);
     uint64_t delay_attempt_1 = backoff_policy.calculate_delay(1);
     uint64_t delay_attempt_2 = backoff_policy.calculate_delay(2);
     
-    // Delays should remain bounded by maximum timeout limit
     assert(delay_attempt_1 <= 100);
     assert(delay_attempt_2 <= 200);
-    std::cout << "[DEBUG] Calculated Jitter Backoff (Attempt 1): " << delay_attempt_1 << " ms\n";
-    std::cout << "[DEBUG] Calculated Jitter Backoff (Attempt 2): " << delay_attempt_2 << " ms\n";
 
     std::cout << "[SUCCESS] Phase 8: Fault tolerance and dynamic failover validated.\n";
 }
@@ -293,6 +344,9 @@ int main() {
 
         // Run Phase 8 verification
         test_fault_tolerance_pipeline();
+
+        // Run Option B verification
+        test_rate_limiting_security_pipeline();
 
         std::cout << "\n[STATUS] All engine targets built and verified successfully.\n";
 

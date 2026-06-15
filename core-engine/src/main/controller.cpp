@@ -17,41 +17,138 @@
 #include "system/monitor.hpp"
 #include "network/backoff.hpp"
 
+void test_dynamic_multi_hop_routing() {
+    std::cout << "[INFO] Commencing Phase 6: Dynamic Multi-hop Link-State Routing tests...\n";
+
+    using namespace netsim::network;
+
+    // 1. Setup simulated router identities and subnets using unique integer IDs
+    Router router_a(1, "RouterA", IPv4Address("10.0.1.1"), SubnetMask(24), "00:AA:00:11:11:11");
+    Router router_b(2, "RouterB", IPv4Address("10.0.2.1"), SubnetMask(24), "00:AA:00:22:22:22");
+    Router router_c(3, "RouterC", IPv4Address("10.0.3.1"), SubnetMask(24), "00:AA:00:33:33:33");
+
+    // Network addressing lookups mapped via native integer IDs
+    std::unordered_map<uint32_t, IPv4Address> node_to_ip = {
+        {1, IPv4Address("10.0.1.1")},
+        {2, IPv4Address("10.0.2.1")},
+        {3, IPv4Address("10.0.3.1")}
+    };
+
+    std::unordered_map<uint32_t, SubnetMask> node_to_mask = {
+        {1, SubnetMask(24)},
+        {2, SubnetMask(24)},
+        {3, SubnetMask(24)}
+    };
+
+    // Adjacency Map using native integers: NodeID -> [(NeighborID, Cost)]
+    std::unordered_map<uint32_t, std::vector<std::pair<uint32_t, uint32_t>>> topology_graph_scenario_1 = {
+        {1, {{2, 1}, {3, 10}}},
+        {2, {{1, 1}, {3, 2}}},
+        {3, {{1, 10}, {2, 2}}}
+    };
+
+    router_a.compute_routes(topology_graph_scenario_1, node_to_ip, node_to_mask);
+
+    // Look up route for a node in Router C's subnet (e.g., 10.0.3.100)
+    auto route1 = router_a.lookup_route(IPv4Address("10.0.3.100"));
+    assert(route1.first == true);
+    // Next hop must resolve to RouterB's ID (2)
+    assert(route1.second == 2);
+
+    // 2. Link cost spike (Direct Route becomes faster: RouterA -> RouterC)
+    std::unordered_map<uint32_t, std::vector<std::pair<uint32_t, uint32_t>>> topology_graph_scenario_2 = {
+        {1, {{2, 1}, {3, 10}}},
+        {2, {{1, 1}, {3, 15}}},
+        {3, {{1, 10}, {2, 15}}}
+    };
+
+    router_a.compute_routes(topology_graph_scenario_2, node_to_ip, node_to_mask);
+
+    auto route2 = router_a.lookup_route(IPv4Address("10.0.3.100"));
+    assert(route2.first == true);
+    // Next hop must dynamically adjust to RouterC's ID (3)
+    assert(route2.second == 3);
+
+    std::cout << "[SUCCESS] Phase 6: Dynamic link-state Dijkstra routing engine validated.\n";
+}
+
+void test_fault_tolerance_pipeline() {
+    std::cout << "[INFO] Commencing Phase 8: Fault Tolerance & Circuit Breaker validation...\n";
+
+    using namespace netsim::network;
+
+    Router router_a(1, "RouterA", IPv4Address("10.0.1.1"), SubnetMask(24), "00:AA:00:11:11:11");
+    Router router_b(2, "RouterB", IPv4Address("10.0.2.1"), SubnetMask(24), "00:AA:00:22:22:22");
+    Router router_c(3, "RouterC", IPv4Address("10.0.3.1"), SubnetMask(24), "00:AA:00:33:33:33");
+
+    std::unordered_map<uint32_t, IPv4Address> node_to_ip = {
+        {1, IPv4Address("10.0.1.1")},
+        {2, IPv4Address("10.0.2.1")},
+        {3, IPv4Address("10.0.3.1")}
+    };
+
+    std::unordered_map<uint32_t, SubnetMask> node_to_mask = {
+        {1, SubnetMask(24)},
+        {2, SubnetMask(24)},
+        {3, SubnetMask(24)}
+    };
+
+    std::unordered_map<uint32_t, std::vector<std::pair<uint32_t, uint32_t>>> graph = {
+        {1, {{2, 1}, {3, 10}}},
+        {2, {{1, 1}, {3, 2}}},
+        {3, {{1, 10}, {2, 2}}}
+    };
+
+    router_a.compute_routes(graph, node_to_ip, node_to_mask);
+    auto initial_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
+    assert(initial_route.first == true);
+    assert(initial_route.second == 2); // Router B's ID
+
+    router_a.record_link_failure(2);
+    router_a.record_link_failure(2);
+    assert(router_a.get_link_state(2) == CircuitState::Closed);
+
+    router_a.record_link_failure(2); // Trips to OPEN
+    assert(router_a.get_link_state(2) == CircuitState::Open);
+
+    router_a.compute_routes(graph, node_to_ip, node_to_mask);
+    auto failover_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
+    assert(failover_route.first == true);
+    assert(failover_route.second == 3); // Router C's ID
+
+    Backoff backoff_policy(100, 2000);
+    uint64_t delay_attempt_1 = backoff_policy.calculate_delay(1);
+    uint64_t delay_attempt_2 = backoff_policy.calculate_delay(2);
+    
+    assert(delay_attempt_1 <= 100);
+    assert(delay_attempt_2 <= 200);
+
+    std::cout << "[SUCCESS] Phase 8: Fault tolerance and dynamic failover validated.\n";
+}
+
 void test_rate_limiting_security_pipeline() {
     std::cout << "[INFO] Commencing Option B: Lock-Free GCRA Rate Limiter validation...\n";
 
     using namespace netsim::network;
 
-    // Create a node protected by our lock-free GCRA rate limiter
-    Node server_node("ProtectedServer", IPv4Address("192.168.1.10"), SubnetMask(24), "00:BB:00:11:11:11");
-    
-    // Configure limits: 10 packets per second, max burst capacity of 5
+    Node server_node(1, "ProtectedServer", IPv4Address("192.168.1.10"), SubnetMask(24), "00:BB:00:11:11:11");
     server_node.enable_rate_limiting(10.0, 5.0);
 
-    // 1. Verify Burst Capacity Limits
-    // The first 5 immediate packets must be allowed (consuming the burst capacity)
     for (int i = 1; i <= 5; ++i) {
         assert(server_node.receive_packet() == true);
     }
     
-    // The 6th packet must be dropped immediately (tolerance exceeded)
     assert(server_node.receive_packet() == false);
     std::cout << "[DEBUG] Burst limit enforced. First 5 packets allowed, 6th packet dropped.\n";
 
-    // 2. Verify Refill Rate Mechanics
-    // Wait for 500 milliseconds. At 10 tokens/sec, the bucket should refill by 5 tokens.
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    // We should be able to receive exactly 5 packets now
     for (int i = 1; i <= 5; ++i) {
         assert(server_node.receive_packet() == true);
     }
-    // The 6th must be dropped again
     assert(server_node.receive_packet() == false);
     std::cout << "[DEBUG] Refill rate confirmed. Bucket refilled by 5 tokens over 500ms.\n";
 
-    // 3. Verify Multi-Threaded Thread-Safety Contention
-    // Spawn multiple threads simulating concurrent packet deliveries to verify thread-safety
     std::vector<std::thread> traffic_generators;
     std::atomic<uint32_t> allowed_count(0);
     std::atomic<uint32_t> dropped_count(0);
@@ -67,7 +164,6 @@ void test_rate_limiting_security_pipeline() {
         }
     };
 
-    // Spawn 4 concurrent threads (40 packets total)
     for (int i = 0; i < 4; ++i) {
         traffic_generators.emplace_back(generate_traffic);
     }
@@ -76,64 +172,10 @@ void test_rate_limiting_security_pipeline() {
         th.join();
     }
 
-    // Verify all threads executed successfully and state counters remain consistent
     assert(allowed_count + dropped_count == 40);
     std::cout << "[DEBUG] Concurrency test passed. Allowed: " << allowed_count << ", Dropped: " << dropped_count << "\n";
 
     std::cout << "[SUCCESS] Option B: Lock-Free GCRA rate limiter fully validated.\n";
-}
-
-void test_fault_tolerance_pipeline() {
-    std::cout << "[INFO] Commencing Phase 8: Fault Tolerance & Circuit Breaker validation...\n";
-    using namespace netsim::network;
-
-    Router router_a("RouterA", IPv4Address("10.0.1.1"), SubnetMask(24), "00:AA:00:11:11:11");
-    Router router_b("RouterB", IPv4Address("10.0.2.1"), SubnetMask(24), "00:AA:00:22:22:22");
-    Router router_c("RouterC", IPv4Address("10.0.3.1"), SubnetMask(24), "00:AA:00:33:33:33");
-
-    std::unordered_map<std::string, IPv4Address> node_to_ip = {
-        {"RouterA", IPv4Address("10.0.1.1")},
-        {"RouterB", IPv4Address("10.0.2.1")},
-        {"RouterC", IPv4Address("10.0.3.1")}
-    };
-
-    std::unordered_map<std::string, SubnetMask> node_to_mask = {
-        {"RouterA", SubnetMask(24)},
-        {"RouterB", SubnetMask(24)},
-        {"RouterC", SubnetMask(24)}
-    };
-
-    std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>> graph = {
-        {"RouterA", {{"RouterB", 1}, {"RouterC", 10}}},
-        {"RouterB", {{"RouterA", 1}, {"RouterC", 2}}},
-        {"RouterC", {{"RouterA", 10}, {"RouterB", 2}}}
-    };
-
-    router_a.compute_routes(graph, node_to_ip, node_to_mask);
-    auto initial_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
-    assert(initial_route.first == true);
-    assert(initial_route.second == IPv4Address("10.0.2.1"));
-
-    router_a.record_link_failure("RouterB");
-    router_a.record_link_failure("RouterB");
-    assert(router_a.get_link_state("RouterB") == CircuitState::Closed);
-
-    router_a.record_link_failure("RouterB");
-    assert(router_a.get_link_state("RouterB") == CircuitState::Open);
-
-    router_a.compute_routes(graph, node_to_ip, node_to_mask);
-    auto failover_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
-    assert(failover_route.first == true);
-    assert(failover_route.second == IPv4Address("10.0.3.1"));
-
-    Backoff backoff_policy(100, 2000);
-    uint64_t delay_attempt_1 = backoff_policy.calculate_delay(1);
-    uint64_t delay_attempt_2 = backoff_policy.calculate_delay(2);
-    
-    assert(delay_attempt_1 <= 100);
-    assert(delay_attempt_2 <= 200);
-
-    std::cout << "[SUCCESS] Phase 8: Fault tolerance and dynamic failover validated.\n";
 }
 
 void test_lock_free_telemetry_bridge() {
@@ -181,51 +223,6 @@ void test_lock_free_telemetry_bridge() {
     std::cout << "[SUCCESS] Phase 7: Lock-Free circular queue telemetry bridge validated.\n";
 }
 
-void test_dynamic_multi_hop_routing() {
-    std::cout << "[INFO] Commencing Phase 6: Dynamic Multi-hop Link-State Routing tests...\n";
-    using namespace netsim::network;
-
-    Router router_a("RouterA", IPv4Address("10.0.1.1"), SubnetMask(24), "00:AA:00:11:11:11");
-    Router router_b("RouterB", IPv4Address("10.0.2.1"), SubnetMask(24), "00:AA:00:22:22:22");
-    Router router_c("RouterC", IPv4Address("10.0.3.1"), SubnetMask(24), "00:AA:00:33:33:33");
-
-    std::unordered_map<std::string, IPv4Address> node_to_ip = {
-        {"RouterA", IPv4Address("10.0.1.1")},
-        {"RouterB", IPv4Address("10.0.2.1")},
-        {"RouterC", IPv4Address("10.0.3.1")}
-    };
-
-    std::unordered_map<std::string, SubnetMask> node_to_mask = {
-        {"RouterA", SubnetMask(24)},
-        {"RouterB", SubnetMask(24)},
-        {"RouterC", SubnetMask(24)}
-    };
-
-    std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>> topology_graph_scenario_1 = {
-        {"RouterA", {{"RouterB", 1}, {"RouterC", 10}}},
-        {"RouterB", {{"RouterA", 1}, {"RouterC", 2}}},
-        {"RouterC", {{"RouterA", 10}, {"RouterB", 2}}}
-    };
-
-    router_a.compute_routes(topology_graph_scenario_1, node_to_ip, node_to_mask);
-    auto route1 = router_a.lookup_route(IPv4Address("10.0.3.100"));
-    assert(route1.first == true);
-    assert(route1.second == IPv4Address("10.0.2.1"));
-
-    std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>> topology_graph_scenario_2 = {
-        {"RouterA", {{"RouterB", 1}, {"RouterC", 10}}},
-        {"RouterB", {{"RouterA", 1}, {"RouterC", 15}}},
-        {"RouterC", {{"RouterA", 10}, {"RouterB", 15}}}
-    };
-
-    router_a.compute_routes(topology_graph_scenario_2, node_to_ip, node_to_mask);
-    auto route2 = router_a.lookup_route(IPv4Address("10.0.3.100"));
-    assert(route2.first == true);
-    assert(route2.second == IPv4Address("10.0.3.1"));
-
-    std::cout << "[SUCCESS] Phase 6: Dynamic link-state Dijkstra routing engine validated.\n";
-}
-
 void test_ipv4_subnetting_logic() {
     std::cout << "[INFO] Commencing Phase 5: Bitwise Subnet Mask validation tests...\n";
     using namespace netsim::network;
@@ -248,7 +245,7 @@ void test_ipv4_subnetting_logic() {
         std::cout << "[DEBUG] Caught expected contiguous verification error: " << ex.what() << "\n";
     }
 
-    Node host_node("HostA", IPv4Address("10.0.0.10"), SubnetMask(24), "00:11:22:33:44:55");
+    Node host_node(4, "HostA", IPv4Address("10.0.0.10"), SubnetMask(24), "00:11:22:33:44:55");
     IPv4Address local_target("10.0.0.20");
     IPv4Address remote_target("10.0.1.20");
 

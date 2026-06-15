@@ -5,32 +5,38 @@
 
 namespace netsim::network {
 
-Router::Router(std::string name, IPv4Address ip, SubnetMask mask, std::string mac)
-    : Node(std::move(name), ip, mask, std::move(mac)) {}
+Router::Router(uint32_t id, std::string name, IPv4Address ip, SubnetMask mask, std::string mac)
+    : Node(id, std::move(name), ip, mask, std::move(mac)) {}
 
-void Router::record_link_success(const std::string& neighbor_node) noexcept {
-    link_breakers_[neighbor_node].record_success();
+void Router::record_link_success(uint32_t neighbor_id) noexcept {
+    link_breakers_[neighbor_id].record_success();
 }
 
-void Router::record_link_failure(const std::string& neighbor_node) noexcept {
-    link_breakers_[neighbor_node].record_failure();
+void Router::record_link_failure(uint32_t neighbor_id) noexcept {
+    link_breakers_[neighbor_id].record_failure();
 }
 
-CircuitState Router::get_link_state(const std::string& neighbor_node) noexcept {
-    return link_breakers_[neighbor_node].get_state();
+CircuitState Router::get_link_state(uint32_t neighbor_id) noexcept {
+    return link_breakers_[neighbor_id].get_state();
 }
 
 void Router::compute_routes(
-    const std::unordered_map<std::string, std::vector<std::pair<std::string, uint32_t>>>& topology_graph,
-    const std::unordered_map<std::string, IPv4Address>& node_to_ip,
-    const std::unordered_map<std::string, SubnetMask>& node_to_mask) 
+    const std::unordered_map<uint32_t, std::vector<std::pair<uint32_t, uint32_t>>>& topology_graph,
+    const std::unordered_map<uint32_t, IPv4Address>& node_to_ip,
+    const std::unordered_map<uint32_t, SubnetMask>& node_to_mask) 
 {
-    std::string source = this->name();
-    using PathNode = std::pair<uint32_t, std::string>;
+    // CRITICAL FIX: Clear the routing table at the start of recalculations to prevent infinite memory leaks
+    routing_table_.clear();
+
+    uint32_t source = this->id();
+    
+    // Cache-friendly: pair is {cost, node_id} using native uint32_t values.
+    // Bypasses std::string heap allocations entirely on the hot path.
+    using PathNode = std::pair<uint32_t, uint32_t>;
     std::priority_queue<PathNode, std::vector<PathNode>, std::greater<PathNode>> min_heap;
 
-    std::unordered_map<std::string, uint32_t> distances;
-    std::unordered_map<std::string, std::string> parent;
+    std::unordered_map<uint32_t, uint32_t> distances;
+    std::unordered_map<uint32_t, uint32_t> parent;
 
     for (const auto& [node, _] : topology_graph) {
         distances[node] = std::numeric_limits<uint32_t>::max();
@@ -53,13 +59,11 @@ void Router::compute_routes(
         for (const auto& [v, original_cost] : it->second) {
             uint32_t cost = original_cost;
 
-            // If the link originates from this router, check its circuit breaker
             if (u == source) {
                 auto breaker_it = link_breakers_.find(v);
                 if (breaker_it != link_breakers_.end()) {
-                    // Inflate link cost if the circuit breaker is OPEN
                     if (breaker_it->second.get_state() == CircuitState::Open) {
-                        cost = 999999; // Set cost to maximum to bypass the link
+                        cost = 999999; // Inflate cost of open circuit link
                     }
                 }
             }
@@ -73,12 +77,10 @@ void Router::compute_routes(
         }
     }
 
-    routing_table_.clear();
-
     for (const auto& [dest, total_cost] : distances) {
-        if (dest == source || total_cost >= 999999) continue; // Bypass unreachable or degraded paths
+        if (dest == source || total_cost >= 999999) continue;
 
-        std::string current = dest;
+        uint32_t current = dest;
         while (parent.find(current) != parent.end() && parent[current] != source) {
             current = parent[current];
         }
@@ -100,7 +102,7 @@ void Router::compute_routes(
         RoutingTableEntry entry{
             IPv4Address(subnet_raw),
             dest_mask,
-            next_hop_ip,
+            current, // Store next hop ID
             "eth0",
             total_cost
         };
@@ -108,10 +110,10 @@ void Router::compute_routes(
     }
 }
 
-std::pair<bool, IPv4Address> Router::lookup_route(const IPv4Address& destination_ip) const noexcept {
+std::pair<bool, uint32_t> Router::lookup_route(const IPv4Address& destination_ip) const noexcept {
     uint32_t dest_raw = destination_ip.to_u32();
     bool route_found = false;
-    IPv4Address best_next_hop;
+    uint32_t best_next_hop = 0;
     uint8_t longest_prefix = 0;
 
     for (const auto& entry : routing_table_) {
@@ -120,7 +122,7 @@ std::pair<bool, IPv4Address> Router::lookup_route(const IPv4Address& destination
             uint8_t current_prefix = entry.mask.to_prefix_length();
             if (!route_found || current_prefix > longest_prefix) {
                 route_found = true;
-                best_next_hop = entry.next_hop;
+                best_next_hop = entry.next_hop_id;
                 longest_prefix = current_prefix;
             }
         }

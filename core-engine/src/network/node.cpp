@@ -3,8 +3,8 @@
 
 namespace netsim::network {
 
-Node::Node(std::string name, IPv4Address ip, SubnetMask mask, std::string mac)
-    : name_(std::move(name)), ip_(ip), mask_(mask), mac_(std::move(mac)), rate_limiter_(nullptr) {}
+Node::Node(uint32_t id, std::string name, IPv4Address ip, SubnetMask mask, std::string mac)
+    : id_(id), name_(std::move(name)), ip_(ip), mask_(mask), mac_(std::move(mac)), rate_limiter_(nullptr) {}
 
 bool Node::is_local(const IPv4Address& target_ip) const noexcept {
     uint32_t mask_val = mask_.to_u32();
@@ -19,7 +19,7 @@ void Node::enable_rate_limiting(double rate_per_sec, double burst_capacity) noex
 
 bool Node::receive_packet() noexcept {
     if (!rate_limiter_) {
-        return true; // Unrestricted interface
+        return true;
     }
     return rate_limiter_->allow();
 }

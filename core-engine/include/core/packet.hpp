@@ -12,16 +12,19 @@ struct PacketHeader {
 };
 #pragma pack(pop)
 
-class Packet {
-public:
+struct Packet {
     PacketHeader header;
-    std::vector<uint8_t> payload;
+    // Bounded to 1500 bytes (Standard Ethernet MTU). 
+    // This makes the entire Packet struct Trivially Destructible, 
+    // resolving the MemoryArena destructor leak.
+    uint8_t payload[1500];
 
-    Packet() = default; 
-    Packet(uint8_t msg_type, const std::vector<uint8_t>& data);
+    Packet() noexcept;
+    Packet(uint8_t msg_type, const uint8_t* data, uint32_t len) noexcept;
+    Packet(uint8_t msg_type, const std::vector<uint8_t>& data) noexcept;
 
     // Flattens object to bytes for the socket
-    std::vector<uint8_t> serialize() const;
+    [[nodiscard]] std::vector<uint8_t> serialize() const;
       
     // Rebuilds object from socket bytes
     static Packet deserialize(const std::vector<uint8_t>& raw_data);

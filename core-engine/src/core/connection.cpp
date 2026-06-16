@@ -1,23 +1,35 @@
 #include "core/connection.hpp"
 #include <arpa/inet.h>
+#include <fcntl.h>
 #include <system_error>
 #include <stdexcept>
 
 namespace netsim::core {
 
-Connection::Connection(SocketFD&& socket) : socket_(std::move(socket)) {}
+Connection::Connection(SocketFD&& socket) : socket_(std::move(socket)) {
+    if (socket_.is_valid()) {
+        // Configure socket to be Non-Blocking (O_NONBLOCK)
+        int flags = ::fcntl(socket_.get(), F_GETFL, 0);
+        if (flags < 0 || ::fcntl(socket_.get(), F_SETFL, flags | O_NONBLOCK) < 0) {
+            throw std::system_error(errno, std::system_category(), "Failed to set O_NONBLOCK");
+        }
+    }
+}
 
 std::unique_ptr<Connection> Connection::connect_to(const std::string& ip, uint16_t port) {
-    // 1. Request a raw IPv4 TCP socket from the OS
     int sock = ::socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         throw std::system_error(errno, std::system_category(), "Failed to create socket");
     }
 
-    // Immediately wrap it in our RAII class for safety
     SocketFD safe_socket(sock);
     
-    // 2. Configure the destination address and port
+    // Set non-blocking before connect to initiate an asynchronous TCP handshake
+    int flags = ::fcntl(safe_socket.get(), F_GETFL, 0);
+    if (flags < 0 || ::fcntl(safe_socket.get(), F_SETFL, flags | O_NONBLOCK) < 0) {
+        throw std::system_error(errno, std::system_category(), "Failed to set O_NONBLOCK on client socket");
+    }
+    
     sockaddr_in server_addr{};
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
@@ -26,9 +38,9 @@ std::unique_ptr<Connection> Connection::connect_to(const std::string& ip, uint16
         throw std::invalid_argument("Invalid IP address format: " + ip);
     }
 
-    // 3. Attempt the TCP Handshake
-    if (::connect(safe_socket.get(), reinterpret_cast<struct sockaddr*>(&server_addr), sizeof(server_addr)) < 0) {
-        throw std::system_error(errno, std::system_category(), "Connection failed to " + ip);
+    int rc = ::connect(safe_socket.get(), reinterpret_cast<struct sockaddr*>(&server_addr), sizeof(server_addr));
+    if (rc < 0 && errno != EINPROGRESS) {
+        throw std::system_error(errno, std::system_category(), "Connection failed asynchronously");
     }
 
     auto conn = std::make_unique<Connection>(std::move(safe_socket));
@@ -43,10 +55,13 @@ ssize_t Connection::send_data(const std::vector<uint8_t>& data) {
     ssize_t total_sent = 0;
     size_t left_to_send = data.size();
     
-    // Robust sending loop: OS might not send all bytes in one go
     while (total_sent < static_cast<ssize_t>(data.size())) {
         ssize_t sent = ::send(socket_.get(), data.data() + total_sent, left_to_send, 0);
         if (sent < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // Buffer full; yield and retry in next event loop iteration
+                break;
+            }
             throw std::system_error(errno, std::system_category(), "Send failed");
         }
         total_sent += sent;
@@ -62,9 +77,12 @@ std::vector<uint8_t> Connection::receive_data(size_t max_bytes) {
     ssize_t bytes_read = ::recv(socket_.get(), buffer.data(), buffer.size(), 0);
     
     if (bytes_read < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return {}; // No data available right now; do not block
+        }
         throw std::system_error(errno, std::system_category(), "Receive failed");
     } else if (bytes_read == 0) {
-        disconnect(); // Peer cleanly closed the connection
+        disconnect(); 
         return {};
     }
     
@@ -73,7 +91,6 @@ std::vector<uint8_t> Connection::receive_data(size_t max_bytes) {
 }
 
 void Connection::disconnect() noexcept {
-    // Re-assigning to an empty SocketFD triggers the destructor to close the socket
     socket_ = SocketFD{}; 
 }
 

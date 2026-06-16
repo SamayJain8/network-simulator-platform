@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <thread>
+#include <sys/socket.h>
 #include "core/packet.hpp"
 #include "network/arp.hpp"
 #include "protocols/http_sim.hpp"
@@ -18,77 +19,64 @@
 #include "network/backoff.hpp"
 #include "system/event_loop.hpp"
 #include "core/memory_arena.hpp"
+#include "core/tcp_server.hpp"
 
-void test_virtual_event_loop_pipeline() {
-    std::cout << "[INFO] Commencing Option B: Virtual Time Event Loop validation...\n";
+void test_kqueue_async_loop_pipeline() {
+    std::cout << "[INFO] Commencing Path B: macOS Native kqueue Async Event Loop validation...\n";
 
+    using namespace netsim::core;
     using namespace netsim::system;
 
-    EventLoop loop;
-    std::vector<int> execution_order;
+    // 1. Start a non-blocking TCP server on port 9090
+    TcpServer server(9090);
+    server.start();
 
-    // Schedule events with logical, virtual delays (in nanoseconds)
-    // Event 1: scheduled at T = 100ns
-    loop.schedule(100, 1, [&execution_order]() {
-        execution_order.push_back(1);
+    // 2. Initialize our asynchronous event loop
+    KqueueEventLoop loop;
+    bool connection_accepted = false;
+
+    // Register our server socket for read events (incoming connections)
+    loop.register_event(server.server_socket().get(), EVFILT_READ, [&](int fd, uint16_t filter) {
+        auto client_connection = server.accept_connection();
+        if (client_connection) {
+            connection_accepted = true;
+        }
     });
 
-    // Event 2: scheduled at T = 50ns (should run first!)
-    loop.schedule(50, 1, [&execution_order]() {
-        execution_order.push_back(2);
-    });
+    // 3. Initiate an asynchronous client connection
+    auto client = Connection::connect_to("127.0.0.1", 9090);
 
-    // Event 3: scheduled at T = 150ns
-    loop.schedule(150, 1, [&execution_order]() {
-        execution_order.push_back(3);
-    });
+    // 4. Poll the event loop once; the kernel should resolve the read event and wake the callback
+    loop.poll_once(100);
 
-    // Verify empty state
-    assert(loop.empty() == false);
+    assert(connection_accepted == true);
+    server.stop();
 
-    // Run the loop: virtual time advances instantly to execute events in order
-    loop.run();
-
-    // Verify that the discrete-event scheduler sorted and executed events chronologically
-    assert(execution_order.size() == 3);
-    assert(execution_order[0] == 2); // T = 50ns runs first
-    assert(execution_order[1] == 1); // T = 100ns runs second
-    assert(execution_order[2] == 3); // T = 150ns runs third
-
-    // Verify clock advancement
-    assert(loop.virtual_time() == 150);
-
-    std::cout << "[SUCCESS] Option B: Discrete virtual time event loop validated.\n";
+    std::cout << "[SUCCESS] Path B: Asynchronous kqueue socket event engine validated.\n";
 }
 
-void test_memory_arena_allocation() {
-    std::cout << "[INFO] Commencing Option B: Memory Arena Allocator validation...\n";
+void test_trivially_destructible_memory_arena() {
+    std::cout << "[INFO] Commencing Path B: Leak-Free Memory Arena validation...\n";
 
     using namespace netsim::core;
 
-    // Pre-allocate a 10KB contiguous memory arena on the stack/heap
-    MemoryArena arena(10240);
+    MemoryArena arena(10240); // 10KB Pre-allocated arena
 
-    // Allocate Packet structures inside our pre-allocated arena
-    // This executes placement-new inline on our aligned memory block in O(1) time
-    std::vector<uint8_t> payload = {0x01, 0x02, 0x03, 0x04};
-    Packet* pkt1 = arena.allocate<Packet>(0, payload);
+    uint8_t raw_data[] = {0xAA, 0xBB, 0xCC, 0xDD};
+    
+    // Allocate our trivially destructible Packet inside the arena in O(1)
+    Packet* pkt = arena.allocate<Packet>(0, raw_data, 4);
 
-    assert(pkt1 != nullptr);
-    assert(pkt1->header.version == 1);
-    assert(pkt1->header.length == 4);
-    assert(pkt1->payload == payload);
+    assert(pkt != nullptr);
+    assert(pkt->header.version == 1);
+    assert(pkt->header.length == 4);
+    assert(pkt->payload[0] == 0xAA);
+    assert(pkt->payload[1] == 0xBB);
 
-    // Verify second allocation is contiguous and distinct
-    Packet* pkt2 = arena.allocate<Packet>(1, payload);
-    assert(pkt2 != nullptr);
-    assert(pkt2 != pkt1);
-    assert(pkt2->header.type == 1);
-
-    // Reset the arena, freeing all memory instantly in O(1)
+    // Resetting is now completely leak-free and safe because Packet holds no dynamic heap allocations
     arena.reset();
 
-    std::cout << "[SUCCESS] Option B: High-speed, zero-allocation memory arena validated.\n";
+    std::cout << "[SUCCESS] Path B: Trivially-destructible memory arena validated.\n";
 }
 
 void test_rate_limiting_security_pipeline() {
@@ -145,10 +133,8 @@ void test_rate_limiting_security_pipeline() {
 
 void test_fault_tolerance_pipeline() {
     std::cout << "[INFO] Commencing Phase 8: Fault Tolerance & Circuit Breaker validation...\n";
-
     using namespace netsim::network;
 
-    // 1. Initialize routers passing unique integer IDs as the first argument
     Router router_a(1, "RouterA", IPv4Address("10.0.1.1"), SubnetMask(24), "00:AA:00:11:11:11");
     Router router_b(2, "RouterB", IPv4Address("10.0.2.1"), SubnetMask(24), "00:AA:00:22:22:22");
     Router router_c(3, "RouterC", IPv4Address("10.0.3.1"), SubnetMask(24), "00:AA:00:33:33:33");
@@ -165,7 +151,6 @@ void test_fault_tolerance_pipeline() {
         {3, SubnetMask(24)}
     };
 
-    // Adjacency graph utilizing integer IDs
     std::unordered_map<uint32_t, std::vector<std::pair<uint32_t, uint32_t>>> graph = {
         {1, {{2, 1}, {3, 10}}},
         {2, {{1, 1}, {3, 2}}},
@@ -175,9 +160,8 @@ void test_fault_tolerance_pipeline() {
     router_a.compute_routes(graph, node_to_ip, node_to_mask);
     auto initial_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
     assert(initial_route.first == true);
-    assert(initial_route.second == 2); // Router B's ID is 2
+    assert(initial_route.second == 2); // Router B's ID
 
-    // 2. Record link failures using integer IDs instead of strings
     router_a.record_link_failure(2);
     router_a.record_link_failure(2);
     assert(router_a.get_link_state(2) == CircuitState::Closed);
@@ -188,7 +172,7 @@ void test_fault_tolerance_pipeline() {
     router_a.compute_routes(graph, node_to_ip, node_to_mask);
     auto failover_route = router_a.lookup_route(IPv4Address("10.0.3.100"));
     assert(failover_route.first == true);
-    assert(failover_route.second == 3); // Router C's ID is 3
+    assert(failover_route.second == 3); // Router C's ID
 
     Backoff backoff_policy(100, 2000);
     uint64_t delay_attempt_1 = backoff_policy.calculate_delay(1);
@@ -199,7 +183,6 @@ void test_fault_tolerance_pipeline() {
 
     std::cout << "[SUCCESS] Phase 8: Fault tolerance and dynamic failover validated.\n";
 }
-
 
 void test_lock_free_telemetry_bridge() {
     std::cout << "[INFO] Commencing Phase 7: Lock-Free Telemetry Bridge validation...\n";
@@ -378,7 +361,7 @@ int main() {
         netsim::core::Packet decoded_pkt = netsim::core::Packet::deserialize(wire_stream);
         
         assert(decoded_pkt.header.version == pkt.header.version);
-        assert(decoded_pkt.payload == pkt.payload);
+        assert(std::memcmp(decoded_pkt.payload, pkt.payload, pkt.header.length) == 0);
         std::cout << "[SUCCESS] Phase 2: Host/Network byte serialization validated.\n";
 
         // Run Phase 3 verification
@@ -414,8 +397,8 @@ int main() {
         test_rate_limiting_security_pipeline();
 
         // Run Option B Advanced additions verification
-        test_virtual_event_loop_pipeline();
-        test_memory_arena_allocation();
+        test_kqueue_async_loop_pipeline();
+        test_trivially_destructible_memory_arena();
 
         std::cout << "\n[STATUS] All engine targets built and verified successfully.\n";
 

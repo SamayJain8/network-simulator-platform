@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <chrono>
 #include <thread>
+#include <cstring>
 #include <sys/socket.h>
 #include "core/packet.hpp"
 #include "network/arp.hpp"
@@ -35,8 +36,8 @@ void test_kqueue_async_loop_pipeline() {
     KqueueEventLoop loop;
     bool connection_accepted = false;
 
-    // Register our server socket for read events (incoming connections)
-    loop.register_event(server.server_socket().get(), EVFILT_READ, [&](int fd, uint16_t filter) {
+  // Register our server socket for read events
+    loop.register_event(server.server_socket().get(), EVENT_READ, [&](int fd, uint16_t filter) {
         auto client_connection = server.accept_connection();
         if (client_connection) {
             connection_accepted = true;
@@ -361,7 +362,7 @@ int main() {
         netsim::core::Packet decoded_pkt = netsim::core::Packet::deserialize(wire_stream);
         
         assert(decoded_pkt.header.version == pkt.header.version);
-        assert(std::memcmp(decoded_pkt.payload, pkt.payload, pkt.header.length) == 0);
+        assert(::memcmp(decoded_pkt.payload, pkt.payload, pkt.header.length) == 0);
         std::cout << "[SUCCESS] Phase 2: Host/Network byte serialization validated.\n";
 
         // Run Phase 3 verification

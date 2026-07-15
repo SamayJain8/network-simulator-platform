@@ -47,7 +47,7 @@ private:
     }
 };
 
-// High-level Connection Abstraction and
+// High-level Connection Abstraction
 class Connection {
 public:
     // Factory method to establish a TCP connection
@@ -61,6 +61,9 @@ public:
     std::vector<uint8_t> receive_data(size_t max_bytes = 4096);
 
     void disconnect() noexcept;
+
+    // CRITICAL FIX: Public getter to expose the underlying socket descriptor
+    [[nodiscard]] const SocketFD& socket() const noexcept { return socket_; }
 
 private:
     SocketFD socket_;

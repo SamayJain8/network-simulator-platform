@@ -6,6 +6,7 @@
 #include <vector>
 #include <stdexcept>
 #include <utility>
+#include <cstdint> // <--- CRITICAL PORTABILITY INCLUDE: Required for uint64_t on Linux
 
 namespace netsim::network {
 

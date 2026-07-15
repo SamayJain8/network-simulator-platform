@@ -5,11 +5,12 @@ function App() {
   const [systemAlerts, setSystemAlerts] = useState([]);
   const canvasRef = useRef(null);
 
+  // 1. Telemetry API Polling Hook (Runs once per second)
   useEffect(() => {
     const fetchTelemetry = async () => {
       try {
         const response = await fetch('http://127.0.0.1:8000/telemetry/analysis');
-        if (!response.ok) throw new Error('API server unreachable');
+        if (!response.ok) throw new Error('API offline');
         const data = await response.json();
         setAnalysisData(data);
 
@@ -24,12 +25,12 @@ function App() {
             });
           }
         });
-        
+
         if (newAlerts.length > 0) {
-          setSystemAlerts(prev => [...newAlerts, ...prev].slice(0, 10));
+          setSystemAlerts(prev => [...newAlerts, ...prev].slice(0, 15));
         }
       } catch (err) {
-        console.warn('FastAPI Polling warning: ', err.message);
+        console.warn('Backend API connection offline');
       }
     };
 
@@ -38,140 +39,452 @@ function App() {
     return () => clearInterval(interval);
   }, []);
 
+  // 2. Immediate-Mode 60 FPS Canvas Animation Loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-    
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    let animationFrameId;
+    let pulseOffset = 0; // Animates flowing data particles
 
     const nodes = {
-      RouterA: { x: 150, y: 80, label: 'RouterA', ip: '10.0.1.1' },
-      RouterB: { x: 450, y: 80, label: 'RouterB', ip: '10.0.2.1' },
-      RouterC: { x: 300, y: 280, label: 'RouterC', ip: '10.0.3.1' }
+      RouterA: { x: 150, y: 100, label: 'Router A', ip: '10.0.1.1' },
+      RouterB: { x: 450, y: 100, label: 'Router B', ip: '10.0.2.1' },
+      RouterC: { x: 300, y: 280, label: 'Router C', ip: '10.0.3.1' }
     };
 
-    const getLinkStyle = (src, dest) => {
+    const getLinkState = (src, dest) => {
       const key1 = `${src}->${dest}`;
       const key2 = `${dest}->${src}`;
       const prediction = analysisData[key1] || analysisData[key2];
 
       if (prediction) {
-        return prediction.is_anomaly ? { color: '#ef4444', dashed: true, width: 4 } : { color: '#10b981', dashed: false, width: 2.5 };
+        return {
+          active: true,
+          anomalous: prediction.is_anomaly,
+          risk: prediction.anomaly_probability
+        };
       }
-      return { color: '#475569', dashed: false, width: 1.5 };
+      return { active: false, anomalous: false, risk: 0.0 };
     };
 
-    const drawLink = (src, dest) => {
-      const style = getLinkStyle(src.label, dest.label);
-      ctx.beginPath();
-      ctx.strokeStyle = style.color;
-      ctx.lineWidth = style.width;
-      if (style.dashed) {
-        ctx.setLineDash([8, 6]);
-      } else {
-        ctx.setLineDash([]);
+    const drawGrid = () => {
+      ctx.strokeStyle = '#1e293b';
+      ctx.lineWidth = 0.5;
+      const step = 30;
+      for (let i = 0; i < canvas.width; i += step) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, canvas.height);
+        ctx.stroke();
       }
-      ctx.moveTo(src.x, src.y);
-      ctx.lineTo(dest.x, dest.y);
-      ctx.stroke();
+      for (let j = 0; j < canvas.height; j += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, j);
+        ctx.lineTo(canvas.width, j);
+        ctx.stroke();
+      }
     };
 
-    drawLink(nodes.RouterA, nodes.RouterB);
-    drawLink(nodes.RouterB, nodes.RouterC);
-    drawLink(nodes.RouterA, nodes.RouterC);
+    const drawLinks = () => {
+      const connections = [
+        [nodes.RouterA, nodes.RouterB],
+        [nodes.RouterB, nodes.RouterC],
+        [nodes.RouterA, nodes.RouterC]
+      ];
 
-    Object.values(nodes).forEach(node => {
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.arc(node.x, node.y, 24, 0, 2 * Math.PI);
-      ctx.fillStyle = '#1e293b';
-      ctx.strokeStyle = '#38bdf8';
-      ctx.lineWidth = 2.5;
-      ctx.fill();
-      ctx.stroke();
+      connections.forEach(([src, dest]) => {
+        const status = getLinkState(src.label.replace(' ', ''), dest.label.replace(' ', ''));
 
-      ctx.fillStyle = '#f1f5f9';
-      ctx.font = 'bold 12px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText(node.label, node.x, node.y + 4);
+        ctx.beginPath();
+        ctx.moveTo(src.x, src.y);
+        ctx.lineTo(dest.x, dest.y);
 
-      ctx.fillStyle = '#94a3b8';
-      ctx.font = '10px sans-serif';
-      ctx.fillText(node.ip, node.x, node.y + 40);
-    });
+        if (!status.active) {
+          // Idle Link: Dark Slate
+          ctx.strokeStyle = '#334155';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([]);
+          ctx.stroke();
+        } else if (status.anomalous) {
+          // Anomalous Link: Flickering Neon Red
+          const flicker = Math.random() > 0.15 ? '#ef4444' : '#7f1d1d';
+          ctx.strokeStyle = flicker;
+          ctx.lineWidth = 3.5;
+          ctx.setLineDash([8, 5]);
+          ctx.shadowColor = '#ef4444';
+          ctx.shadowBlur = 12;
+          ctx.stroke();
+          ctx.shadowBlur = 0; // Reset shadow
 
+          // Animate irregular, falling packet drops along the path
+          ctx.fillStyle = '#fca5a5';
+          for (let j = 0; j < 3; ++j) {
+            const dropOffset = (pulseOffset + j * 33) % 100;
+            const t = dropOffset / 100;
+            const x = src.x + (dest.x - src.x) * t;
+            const y = src.y + (dest.y - src.y) * t;
+            ctx.beginPath();
+            ctx.arc(x + (Math.random() - 0.5) * 8, y + (Math.random() - 0.5) * 8, 2, 0, 2 * Math.PI);
+            ctx.fill();
+          }
+        } else {
+          // Healthy Link: Neon Green with smooth packet flow
+          ctx.strokeStyle = '#10b981';
+          ctx.lineWidth = 2.5;
+          ctx.setLineDash([]);
+          ctx.shadowColor = '#10b981';
+          ctx.shadowBlur = 8;
+          ctx.stroke();
+          ctx.shadowBlur = 0; // Reset shadow
+
+          // Render active flowing packet pulse
+          const t = pulseOffset / 100;
+          const px = src.x + (dest.x - src.x) * t;
+          const py = src.y + (dest.y - src.y) * t;
+          ctx.beginPath();
+          ctx.arc(px, py, 5, 0, 2 * Math.PI);
+          ctx.fillStyle = '#a7f3d0';
+          ctx.shadowColor = '#10b981';
+          ctx.shadowBlur = 15;
+          ctx.fill();
+          ctx.shadowBlur = 0; // Reset shadow
+        }
+      });
+    };
+
+    const drawNodes = () => {
+      Object.values(nodes).forEach(node => {
+        // Outer glowing ring
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, 28, 0, 2 * Math.PI);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.2)';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // Inner solid core
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, 22, 0, 2 * Math.PI);
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = '#38bdf8';
+        ctx.shadowBlur = 8;
+        ctx.fill();
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+
+        // Node Label
+        ctx.fillStyle = '#f1f5f9';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(node.label, node.x, node.y + 4);
+
+        // IP Metadata Subtext
+        ctx.fillStyle = '#64748b';
+        ctx.font = '10px monospace';
+        ctx.fillText(node.ip, node.x, node.y + 45);
+      });
+    };
+
+    // The primary 60FPS animation loop
+    const animate = () => {
+      ctx.fillStyle = '#0b0f19'; // Deep slate cockpit background
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      drawGrid();
+      drawLinks();
+      drawNodes();
+
+      pulseOffset = (pulseOffset + 1.2) % 100; // Increment particle velocity
+      animationFrameId = requestAnimationFrame(animate);
+    };
+
+    animate();
+
+    return () => cancelAnimationFrame(animationFrameId);
   }, [analysisData]);
 
   return (
-    <div style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', paddingBottom: '16px', marginBottom: '24px' }}>
+    <div style={styles.container}>
+      {/* Upper Metrics Ticker */}
+      <div style={styles.header}>
         <div>
-          <h1 style={{ fontSize: '24px', fontWeight: 'bold', margin: '0', color: '#38bdf8' }}>Observable Network Simulator Platform</h1>
-          <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#94a3b8' }}>Real-time telemetry and Holt's Linear Trend predictive anomalies</p>
+          <h1 style={styles.title}>Netsim Telemetry Cockpit</h1>
+          <p style={styles.subtitle}>Asynchronous Real-Time Observability Portal</p>
         </div>
-        <div style={{ padding: '6px 12px', borderRadius: '4px', backgroundColor: '#1e293b', border: '1px solid #334155', fontSize: '12px' }}>
-          Telemetry Polling Status: <span style={{ color: '#10b981', fontWeight: 'bold' }}>ACTIVE</span>
+        <div style={styles.statusBox}>
+          Ecosystem Status: <span style={styles.statusText}>OPERATIONAL</span>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '24px' }}>
-        <div style={{ backgroundColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <h2 style={{ fontSize: '16px', fontWeight: 'bold', width: '100%', margin: '0 0 16px 0', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>Live Network Topology Map</h2>
-          <canvas 
-            ref={canvasRef} 
-            width={600} 
-            height={360} 
-            style={{ backgroundColor: '#0f172a', borderRadius: '6px', border: '1px solid #334155' }}
-          />
-          <div style={{ display: 'flex', gap: '16px', marginTop: '16px', fontSize: '11px', color: '#94a3b8' }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '12px', height: '12px', backgroundColor: '#10b981', borderRadius: '2px' }}></span> Healthy Link</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '12px', height: '12px', border: '2px dashed #ef4444', borderRadius: '2px' }}></span> Congested / Anomaly Link</span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}><span style={{ width: '12px', height: '12px', backgroundColor: '#475569', borderRadius: '2px' }}></span> Idle Link</span>
+      {/* Main Grid Division Layout */}
+      <div style={styles.grid}>
+
+        {/* Left Hand Column: The HTML5 Canvas Monitor */}
+        <div style={styles.card}>
+          <div style={styles.cardHeader}>
+            <span style={styles.cardTitle}>Live Link-State Radar</span>
+            <span style={styles.cardStatus}>60 FPS GRAPHICS</span>
+          </div>
+          <div style={styles.canvasContainer}>
+            <canvas
+              ref={canvasRef}
+              width={600}
+              height={360}
+              style={styles.canvas}
+            />
+          </div>
+          <div style={styles.legendContainer}>
+            <span style={styles.legendItem}><span style={{ ...styles.dot, backgroundColor: '#10b981' }}></span> Active Route</span>
+            <span style={styles.legendItem}><span style={{ ...styles.dot, border: '2px dashed #ef4444' }}></span> Congested / Tripped Link</span>
+            <span style={styles.legendItem}><span style={{ ...styles.dot, backgroundColor: '#334155' }}></span> Idle / Unused Link</span>
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ backgroundColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155', padding: '16px' }}>
-            <h2 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0 0 12px 0', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>Active Path Diagnostics</h2>
+        {/* Right Hand Column: Terminal Diagnostics Logs */}
+        <div style={styles.logsColumn}>
+
+          {/* Diagnostics Panel */}
+          <div style={styles.card}>
+            <div style={styles.cardHeader}>
+              <span style={styles.cardTitle}>Active Path Metrics</span>
+              <span style={styles.cardStatus}>API INGESTION</span>
+            </div>
             {Object.keys(analysisData).length === 0 ? (
-              <p style={{ color: '#94a3b8', fontSize: '13px', margin: '0' }}>Waiting for metric streams from C++ core engine...</p>
+              <p style={styles.noData}>Awaiting packet metrics stream from C++ core daemon...</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={styles.metricsContainer}>
                 {Object.entries(analysisData).map(([link, info]) => (
-                  <div key={link} style={{ display: 'flex', justifyContent: 'space-between', padding: '10px', backgroundColor: '#0f172a', borderRadius: '4px', border: '1px solid #334155', fontSize: '13px' }}>
-                    <span style={{ fontWeight: 'bold', color: '#38bdf8' }}>{link}</span>
-                    <span>Status: <span style={{ color: info.is_anomaly ? '#ef4444' : '#10b981', fontWeight: 'bold' }}>{info.is_anomaly ? 'ANOMALOUS' : 'HEALTHY'}</span></span>
-                    <span>Risk Level: <span style={{ fontWeight: 'bold' }}>{(info.anomaly_probability * 100).toFixed(0)}%</span></span>
+                  <div key={link} style={styles.metricRow}>
+                    <span style={styles.metricLink}>{link}</span>
+                    <span style={{ color: info.is_anomaly ? '#ef4444' : '#10b981', fontWeight: 'bold' }}>
+                      {info.is_anomaly ? 'ANOMALOUS' : 'HEALTHY'}
+                    </span>
+                    <span style={styles.metricProbability}>Risk: {(info.anomaly_probability * 100).toFixed(0)}%</span>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          <div style={{ backgroundColor: '#1e293b', borderRadius: '8px', border: '1px solid #334155', padding: '16px', flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
-            <h2 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0 0 12px 0', borderBottom: '1px solid #334155', paddingBottom: '8px' }}>Telemetry AI Alerts & Routing Directives</h2>
-            <div style={{ overflowY: 'auto', maxHeight: '200px', flexGrow: 1, padding: '8px', backgroundColor: '#0f172a', borderRadius: '4px', border: '1px solid #334155', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {/* Linux Terminal Emulator Alert Logs */}
+          <div style={{ ...styles.card, flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
+            <div style={styles.cardHeader}>
+              <span style={styles.cardTitle}>samay@netsim-api:~# tail -f alerts.log</span>
+              <span style={{ ...styles.cardStatus, color: '#ef4444' }}>LIVE TELEMETRY ALERT</span>
+            </div>
+            <div style={styles.terminalContainer}>
               {systemAlerts.length === 0 ? (
-                <p style={{ color: '#94a3b8', fontSize: '12px', margin: '0', textAlign: 'center', paddingTop: '20px' }}>No active anomaly flags detected. Link topology is operating normally.</p>
+                <div style={styles.terminalIdle}>
+                  samay@netsim-api:~# _<br />
+                  <span style={{ color: '#64748b' }}>System telemetry within safe bounds. No warnings recorded.</span>
+                </div>
               ) : (
                 systemAlerts.map((alert, idx) => (
-                  <div key={idx} style={{ borderBottom: '1px solid #1e293b', paddingBottom: '8px', fontSize: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                      <span style={{ color: '#ef4444', fontWeight: 'bold' }}>[ANOMALY DETECTED] - {alert.link}</span>
+                  <div key={idx} style={styles.terminalLog}>
+                    <div style={styles.terminalLogHeader}>
+                      <span style={{ color: '#ff073a' }}>[CRITICAL CONGESTION]</span>
                       <span style={{ color: '#64748b' }}>{alert.time}</span>
                     </div>
-                    <div style={{ color: '#f1f5f9', marginBottom: '4px' }}>{alert.message}</div>
-                    <div style={{ color: '#38bdf8', fontStyle: 'italic' }}>Directive: {alert.recommendation}</div>
+                    <div style={styles.terminalLogMsg}>Source: {alert.message}</div>
+                    <div style={styles.terminalLogAction}>netsim-daemon --set-cost {alert.link} 999999</div>
                   </div>
                 ))
               )}
             </div>
           </div>
+
         </div>
+
       </div>
     </div>
   );
 }
+
+// Scoped Cockpit Styles
+const styles = {
+  container: {
+    padding: '24px',
+    maxWidth: '1280px',
+    margin: '0 auto',
+    backgroundColor: '#070a13',
+    minHeight: '90vh'
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottom: '1px solid #1e293b',
+    paddingBottom: '16px',
+    marginBottom: '24px'
+  },
+  title: {
+    fontSize: '26px',
+    fontWeight: 'bold',
+    fontFamily: 'monospace',
+    letterSpacing: '1px',
+    margin: '0',
+    color: '#00f0ff',
+    textShadow: '0 0 10px rgba(0, 240, 255, 0.3)'
+  },
+  subtitle: {
+    margin: '6px 0 0 0',
+    fontSize: '12px',
+    fontFamily: 'monospace',
+    color: '#64748b',
+    textTransform: 'uppercase'
+  },
+  statusBox: {
+    padding: '8px 16px',
+    borderRadius: '4px',
+    backgroundColor: '#121824',
+    border: '1px solid #1e293b',
+    fontSize: '11px',
+    fontFamily: 'monospace',
+    color: '#94a3b8'
+  },
+  statusText: {
+    color: '#39ff14',
+    fontWeight: 'bold',
+    textShadow: '0 0 8px rgba(57, 255, 20, 0.4)'
+  },
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: '1.1fr 1fr',
+    gap: '24px'
+  },
+  card: {
+    backgroundColor: '#121824',
+    borderRadius: '6px',
+    border: '1px solid #1e293b',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column'
+  },
+  cardHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottom: '1px solid #1e293b',
+    paddingBottom: '10px',
+    marginBottom: '16px'
+  },
+  cardTitle: {
+    fontSize: '13px',
+    fontWeight: 'bold',
+    fontFamily: 'monospace',
+    color: '#f1f5f9',
+    textTransform: 'uppercase'
+  },
+  cardStatus: {
+    fontSize: '10px',
+    fontFamily: 'monospace',
+    color: '#38bdf8'
+  },
+  canvasContainer: {
+    backgroundColor: '#070a13',
+    padding: '8px',
+    borderRadius: '4px',
+    border: '1px solid #1e293b',
+    width: '100%',
+    boxSizing: 'border-box'
+  },
+  canvas: {
+    display: 'block',
+    width: '100%',
+    borderRadius: '2px'
+  },
+  legendContainer: {
+    display: 'flex',
+    gap: '16px',
+    marginTop: '16px',
+    fontSize: '11px',
+    fontFamily: 'monospace',
+    color: '#64748b'
+  },
+  legendItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px'
+  },
+  dot: {
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    display: 'inline-block'
+  },
+  logsColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px'
+  },
+  noData: {
+    color: '#64748b',
+    fontSize: '12px',
+    fontFamily: 'monospace',
+    margin: '12px 0'
+  },
+  metricsContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px'
+  },
+  metricRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '10px 14px',
+    backgroundColor: '#070a13',
+    borderRadius: '4px',
+    border: '1px solid #1e293b',
+    fontSize: '12px',
+    fontFamily: 'monospace'
+  },
+  metricLink: {
+    fontWeight: 'bold',
+    color: '#00f0ff'
+  },
+  metricProbability: {
+    color: '#94a3b8'
+  },
+  terminalContainer: {
+    overflowY: 'auto',
+    maxHeight: '220px',
+    flexGrow: 1,
+    padding: '12px',
+    backgroundColor: '#070a13',
+    borderRadius: '4px',
+    border: '1px solid #1e293b',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    fontFamily: 'monospace'
+  },
+  terminalIdle: {
+    color: '#39ff14',
+    fontSize: '12px',
+    lineHeight: '1.6'
+  },
+  terminalLog: {
+    fontSize: '11px',
+    lineHeight: '1.5',
+    borderBottom: '1px solid #121824',
+    paddingBottom: '8px'
+  },
+  terminalLogHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    marginBottom: '4px'
+  },
+  terminalLogMsg: {
+    color: '#f1f5f9'
+  },
+  terminalLogAction: {
+    color: '#00f0ff',
+    fontStyle: 'italic',
+    marginTop: '2px'
+  }
+};
 
 export default App;

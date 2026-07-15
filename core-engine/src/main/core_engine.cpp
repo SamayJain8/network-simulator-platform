@@ -68,17 +68,16 @@ int main() {
         KqueueEventLoop main_loop;
 
         // Register the listening server socket on the kqueue event loop
-        main_loop.register_event(main_server.server_socket().get(), EVFILT_READ, [&](int fd, uint16_t filter) {
-            // Non-blocking accept loop
+       // 2. Register the listening server socket on the event loop
+        main_loop.register_event(main_server.server_socket().get(), EVENT_READ, [&](int fd, uint16_t filter) {
             while (auto client_conn = main_server.accept_connection()) {
                 int client_fd = client_conn->socket().get();
                 std::cout << "[SERVER] Accepted new asynchronous client connection on FD: " << client_fd << "\n";
 
-                // Initialize client context containing the connection and a clean HTTP FSM parser
                 g_active_connections[client_fd] = ClientContext{std::move(client_conn), HttpSim{}};
 
-                // Register this client socket on our kqueue event loop to poll for reads
-                main_loop.register_event(client_fd, EVFILT_READ, [&](int c_fd, uint16_t c_filter) {
+                // Register this client socket on our event loop to poll for reads
+                main_loop.register_event(client_fd, EVENT_READ, [&](int c_fd, uint16_t c_filter) {
                     auto conn_it = g_active_connections.find(c_fd);
                     if (conn_it == g_active_connections.end()) return;
 

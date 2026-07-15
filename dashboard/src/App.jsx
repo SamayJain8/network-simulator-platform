@@ -1,5 +1,189 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// Scoped Cockpit Styles
+const styles = {
+  container: {
+    padding: '24px',
+    maxWidth: '1280px',
+    margin: '0 auto',
+    backgroundColor: '#070a13',
+    minHeight: '90vh'
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottom: '1px solid #1e293b',
+    paddingBottom: '16px',
+    marginBottom: '24px'
+  },
+  title: {
+    fontSize: '26px',
+    fontWeight: 'bold',
+    fontFamily: 'monospace',
+    letterSpacing: '1px',
+    margin: '0',
+    color: '#00f0ff',
+    textShadow: '0 0 10px rgba(0, 240, 255, 0.3)'
+  },
+  subtitle: {
+    margin: '6px 0 0 0',
+    fontSize: '12px',
+    fontFamily: 'monospace',
+    color: '#64748b',
+    textTransform: 'uppercase'
+  },
+  statusBox: {
+    padding: '8px 16px',
+    borderRadius: '4px',
+    backgroundColor: '#121824',
+    border: '1px solid #1e293b',
+    fontSize: '11px',
+    fontFamily: 'monospace',
+    color: '#94a3b8'
+  },
+  statusText: {
+    color: '#39ff14',
+    fontWeight: 'bold',
+    textShadow: '0 0 8px rgba(57, 255, 20, 0.4)'
+  },
+  grid: {
+    display: 'grid',
+    gridTemplateColumns: '1.1fr 1fr',
+    gap: '24px'
+  },
+  card: {
+    backgroundColor: '#121824',
+    borderRadius: '6px',
+    border: '1px solid #1e293b',
+    padding: '16px',
+    display: 'flex',
+    flexDirection: 'column'
+  },
+  cardHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderBottom: '1px solid #1e293b',
+    paddingBottom: '10px',
+    marginBottom: '16px'
+  },
+  cardTitle: {
+    fontSize: '13px',
+    fontWeight: 'bold',
+    fontFamily: 'monospace',
+    color: '#f1f5f9',
+    textTransform: 'uppercase'
+  },
+  cardStatus: {
+    fontSize: '10px',
+    fontFamily: 'monospace',
+    color: '#38bdf8'
+  },
+  canvasContainer: {
+    backgroundColor: '#070a13',
+    padding: '8px',
+    borderRadius: '4px',
+    border: '1px solid #1e293b',
+    width: '100%',
+    boxSizing: 'border-box'
+  },
+  canvas: {
+    display: 'block',
+    width: '100%',
+    borderRadius: '2px'
+  },
+  legendContainer: {
+    display: 'flex',
+    gap: '16px',
+    marginTop: '16px',
+    fontSize: '11px',
+    fontFamily: 'monospace',
+    color: '#64748b'
+  },
+  legendItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px'
+  },
+  dot: {
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    display: 'inline-block'
+  },
+  logsColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px'
+  },
+  noData: {
+    color: '#64748b',
+    fontSize: '12px',
+    fontFamily: 'monospace',
+    margin: '12px 0'
+  },
+  metricsContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px'
+  },
+  metricRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    padding: '10px 14px',
+    backgroundColor: '#070a13',
+    borderRadius: '4px',
+    border: '1px solid #1e293b',
+    fontSize: '12px',
+    fontFamily: 'monospace'
+  },
+  metricLink: {
+    fontWeight: 'bold',
+    color: '#00f0ff'
+  },
+  metricProbability: {
+    color: '#94a3b8'
+  },
+  terminalContainer: {
+    overflowY: 'auto',
+    maxHeight: '220px',
+    flexGrow: 1,
+    padding: '12px',
+    backgroundColor: '#070a13',
+    borderRadius: '4px',
+    border: '1px solid #1e293b',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    fontFamily: 'monospace'
+  },
+  terminalIdle: {
+    color: '#39ff14',
+    fontSize: '12px',
+    lineHeight: '1.6'
+  },
+  terminalLog: {
+    fontSize: '11px',
+    lineHeight: '1.5',
+    borderBottom: '1px solid #121824',
+    paddingBottom: '8px'
+  },
+  terminalLogHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    marginBottom: '4px'
+  },
+  terminalLogMsg: {
+    color: '#f1f5f9'
+  },
+  terminalLogAction: {
+    color: '#00f0ff',
+    fontStyle: 'italic',
+    marginTop: '2px'
+  }
+};
+
 function App() {
   const [analysisData, setAnalysisData] = useState({});
   const [systemAlerts, setSystemAlerts] = useState([]);
@@ -302,189 +486,5 @@ function App() {
     </div>
   );
 }
-
-// Scoped Cockpit Styles
-const styles = {
-  container: {
-    padding: '24px',
-    maxWidth: '1280px',
-    margin: '0 auto',
-    backgroundColor: '#070a13',
-    minHeight: '90vh'
-  },
-  header: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottom: '1px solid #1e293b',
-    paddingBottom: '16px',
-    marginBottom: '24px'
-  },
-  title: {
-    fontSize: '26px',
-    fontWeight: 'bold',
-    fontFamily: 'monospace',
-    letterSpacing: '1px',
-    margin: '0',
-    color: '#00f0ff',
-    textShadow: '0 0 10px rgba(0, 240, 255, 0.3)'
-  },
-  subtitle: {
-    margin: '6px 0 0 0',
-    fontSize: '12px',
-    fontFamily: 'monospace',
-    color: '#64748b',
-    textTransform: 'uppercase'
-  },
-  statusBox: {
-    padding: '8px 16px',
-    borderRadius: '4px',
-    backgroundColor: '#121824',
-    border: '1px solid #1e293b',
-    fontSize: '11px',
-    fontFamily: 'monospace',
-    color: '#94a3b8'
-  },
-  statusText: {
-    color: '#39ff14',
-    fontWeight: 'bold',
-    textShadow: '0 0 8px rgba(57, 255, 20, 0.4)'
-  },
-  grid: {
-    display: 'grid',
-    gridTemplateColumns: '1.1fr 1fr',
-    gap: '24px'
-  },
-  card: {
-    backgroundColor: '#121824',
-    borderRadius: '6px',
-    border: '1px solid #1e293b',
-    padding: '16px',
-    display: 'flex',
-    flexDirection: 'column'
-  },
-  cardHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderBottom: '1px solid #1e293b',
-    paddingBottom: '10px',
-    marginBottom: '16px'
-  },
-  cardTitle: {
-    fontSize: '13px',
-    fontWeight: 'bold',
-    fontFamily: 'monospace',
-    color: '#f1f5f9',
-    textTransform: 'uppercase'
-  },
-  cardStatus: {
-    fontSize: '10px',
-    fontFamily: 'monospace',
-    color: '#38bdf8'
-  },
-  canvasContainer: {
-    backgroundColor: '#070a13',
-    padding: '8px',
-    borderRadius: '4px',
-    border: '1px solid #1e293b',
-    width: '100%',
-    boxSizing: 'border-box'
-  },
-  canvas: {
-    display: 'block',
-    width: '100%',
-    borderRadius: '2px'
-  },
-  legendContainer: {
-    display: 'flex',
-    gap: '16px',
-    marginTop: '16px',
-    fontSize: '11px',
-    fontFamily: 'monospace',
-    color: '#64748b'
-  },
-  legendItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px'
-  },
-  dot: {
-    width: '10px',
-    height: '10px',
-    borderRadius: '50%',
-    display: 'inline-block'
-  },
-  logsColumn: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px'
-  },
-  noData: {
-    color: '#64748b',
-    fontSize: '12px',
-    fontFamily: 'monospace',
-    margin: '12px 0'
-  },
-  metricsContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px'
-  },
-  metricRow: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    padding: '10px 14px',
-    backgroundColor: '#070a13',
-    borderRadius: '4px',
-    border: '1px solid #1e293b',
-    fontSize: '12px',
-    fontFamily: 'monospace'
-  },
-  metricLink: {
-    fontWeight: 'bold',
-    color: '#00f0ff'
-  },
-  metricProbability: {
-    color: '#94a3b8'
-  },
-  terminalContainer: {
-    overflowY: 'auto',
-    maxHeight: '220px',
-    flexGrow: 1,
-    padding: '12px',
-    backgroundColor: '#070a13',
-    borderRadius: '4px',
-    border: '1px solid #1e293b',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    fontFamily: 'monospace'
-  },
-  terminalIdle: {
-    color: '#39ff14',
-    fontSize: '12px',
-    lineHeight: '1.6'
-  },
-  terminalLog: {
-    fontSize: '11px',
-    lineHeight: '1.5',
-    borderBottom: '1px solid #121824',
-    paddingBottom: '8px'
-  },
-  terminalLogHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    marginBottom: '4px'
-  },
-  terminalLogMsg: {
-    color: '#f1f5f9'
-  },
-  terminalLogAction: {
-    color: '#00f0ff',
-    fontStyle: 'italic',
-    marginTop: '2px'
-  }
-};
 
 export default App;

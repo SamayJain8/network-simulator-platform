@@ -259,7 +259,7 @@ Returns the latest cached prediction per source/destination link.
 - Add service health checks to Docker Compose.
 - Add authentication and configuration management before exposing the API beyond local development.
 
-## Suggested Future DBMS Model
+## Future DBMS Model Which Can Be Used
 
 Useful tables for the persistence phase:
 

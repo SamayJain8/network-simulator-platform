@@ -19,6 +19,7 @@ add_library(core_lib STATIC
     src/system/monitor.cpp
     src/network/circuit_breaker.cpp
     src/system/event_loop.cpp
+    src/system/telemetry_http_client.cpp
 )
 
 # 2. EXECUTABLES: Separate the automated test suite from the production server daemon!

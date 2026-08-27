@@ -15,10 +15,13 @@
 #include "network/router.hpp"
 #include "system/event_queue.hpp"
 #include "system/monitor.hpp"
+#include "system/telemetry_http_client.hpp"
 #include "network/backoff.hpp"
 #include "system/event_loop.hpp"
 #include "core/memory_arena.hpp"
 #include "core/tcp_server.hpp"
+#include <cctype>
+#include <cstdlib>
 
 using namespace netsim::core;
 using namespace netsim::network;
@@ -35,11 +38,109 @@ struct ClientContext {
 SpscRingBuffer<MetricEvent, 1024> g_telemetry_queue;
 std::unique_ptr<TelemetryMonitor> g_monitor;
 std::unique_ptr<MemoryArena> g_arena;
+std::unique_ptr<TelemetryHttpClient> g_telemetry_client;
 
 // Map to retain active connection states and FSM parsers
 std::unordered_map<int, ClientContext> g_active_connections;
 
+uint64_t current_timestamp_us() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()
+        ).count()
+    );
+}
+
+bool env_flag_enabled(const char* name, bool default_value) {
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+        return default_value;
+    }
+
+    std::string normalized(value);
+    for (char& ch : normalized) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+
+    return normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on";
+}
+
+void publish_metric_event(const MetricEvent& event, double throughput_kbps) {
+    if (!g_telemetry_client) {
+        return;
+    }
+
+    const bool published = g_telemetry_client->post_metric_event(event, throughput_kbps);
+    if (!published) {
+        std::cerr << "[TELEMETRY] Failed to publish packet metric to "
+                  << g_telemetry_client->endpoint_url() << "\n";
+    }
+}
+
+void run_demo_traffic_publisher() {
+    std::cout << "[DEMO] C++ telemetry scenario publisher started.\n";
+
+    uint32_t tick = 0;
+    while (true) {
+        const bool congestion_window = (tick % 18) >= 9;
+        const double router_b_c_latency = congestion_window ? 430.0 + ((tick % 3) * 35.0) : 145.0;
+        const uint32_t router_b_c_drops = congestion_window ? 3U : 0U;
+        const double router_b_c_throughput = congestion_window ? 480.0 : 1250.0;
+
+        std::vector<TelemetrySample> samples{
+            {
+                current_timestamp_us(),
+                "RouterA",
+                "RouterB",
+                1000,
+                125.0 + static_cast<double>(tick % 4) * 4.0,
+                0,
+                1320.0
+            },
+            {
+                current_timestamp_us(),
+                "RouterB",
+                "RouterC",
+                congestion_window ? 760U : 1000U,
+                router_b_c_latency,
+                router_b_c_drops,
+                router_b_c_throughput
+            },
+            {
+                current_timestamp_us(),
+                "RouterA",
+                "RouterC",
+                1000,
+                congestion_window ? 165.0 : 118.0,
+                0,
+                congestion_window ? 1420.0 : 1180.0
+            }
+        };
+
+        for (const auto& sample : samples) {
+            const bool published = g_telemetry_client && g_telemetry_client->post_sample(sample);
+            if (published) {
+                std::cout << "[TELEMETRY] Published "
+                          << sample.source_node << "->" << sample.dest_node
+                          << " latency=" << sample.latency_ns
+                          << "ns drops=" << sample.dropped_packets << "\n";
+            } else if (tick % 5 == 0) {
+                std::cerr << "[TELEMETRY] Waiting for AI service at "
+                          << (g_telemetry_client ? g_telemetry_client->endpoint_url() : "unconfigured endpoint")
+                          << "\n";
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        }
+
+        ++tick;
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+    }
+}
+
 int main() {
+    std::cout << std::unitbuf;
+    std::cerr << std::unitbuf;
+
     std::cout << "============================================================\n";
     std::cout << "[INFO] Launching persistent Asynchronous Routing Engine Daemon\n";
     std::cout << "============================================================\n";
@@ -55,6 +156,20 @@ int main() {
         g_monitor->start();
         std::cout << "[SERVER] Telemetry background monitor thread started.\n";
 
+        const char* endpoint_env = std::getenv("NETSIM_TELEMETRY_ENDPOINT");
+        const std::string telemetry_endpoint = endpoint_env != nullptr
+            ? endpoint_env
+            : "http://127.0.0.1:8000/telemetry/stream";
+        g_telemetry_client = std::make_unique<TelemetryHttpClient>(telemetry_endpoint);
+        std::cout << "[SERVER] Telemetry publisher configured for "
+                  << g_telemetry_client->endpoint_url() << "\n";
+
+        if (env_flag_enabled("NETSIM_DEMO_TRAFFIC", true)) {
+            std::thread(run_demo_traffic_publisher).detach();
+        } else {
+            std::cout << "[DEMO] C++ telemetry scenario publisher disabled.\n";
+        }
+
         // Initialize our high-speed Packet Memory Arena (20KB)
         g_arena = std::make_unique<MemoryArena>(20480); 
         std::cout << "[SERVER] Zero-allocation Memory Arena initialized (20KB).\n";
@@ -64,11 +179,10 @@ int main() {
         secure_node.enable_rate_limiting(5.0, 3.0); // 5 packets/sec, burst capacity of 3
         std::cout << "[SERVER] Rate-limiting protection active (GCRA: 5 pkt/s, burst 3).\n";
 
-        // Initialize our kqueue event multiplexer loop
+        // Initialize the native event multiplexer loop (kqueue on macOS, epoll on Linux)
         KqueueEventLoop main_loop;
 
-        // Register the listening server socket on the kqueue event loop
-       // 2. Register the listening server socket on the event loop
+        // Register the listening server socket on the event loop
         main_loop.register_event(main_server.server_socket().get(), EVENT_READ, [&](int fd, uint16_t filter) {
             while (auto client_conn = main_server.accept_connection()) {
                 int client_fd = client_conn->socket().get();
@@ -119,6 +233,7 @@ int main() {
                                     false // Not dropped
                                 };
                                 g_telemetry_queue.push(event);
+                                publish_metric_event(event, static_cast<double>(req.body.size() * 8));
                             } else {
                                 std::cout << "[SERVER] RATE LIMIT BREACH on FD " << c_fd << "! Dropping packet.\n";
 
@@ -132,6 +247,7 @@ int main() {
                                     true // Dropped flag set
                                 };
                                 g_telemetry_queue.push(event);
+                                publish_metric_event(event, 0.0);
                             }
 
                         } catch (const std::exception& ex) {

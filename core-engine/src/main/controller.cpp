@@ -23,7 +23,7 @@
 #include "core/tcp_server.hpp"
 
 void test_kqueue_async_loop_pipeline() {
-    std::cout << "[INFO] Commencing Path B: macOS Native kqueue Async Event Loop validation...\n";
+    std::cout << "[INFO] Commencing Path B: Native async event loop validation...\n";
 
     using namespace netsim::core;
     using namespace netsim::system;
@@ -53,7 +53,7 @@ void test_kqueue_async_loop_pipeline() {
     assert(connection_accepted == true);
     server.stop();
 
-    std::cout << "[SUCCESS] Path B: Asynchronous kqueue socket event engine validated.\n";
+    std::cout << "[SUCCESS] Path B: Asynchronous socket event engine validated.\n";
 }
 
 void test_trivially_destructible_memory_arena() {

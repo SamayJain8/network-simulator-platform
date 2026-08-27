@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, List, Optional
-import asyncio
+from typing import Dict, List
 import logging
 
 from models.schemas import TelemetryData, AnomalyPrediction
@@ -57,6 +56,14 @@ async def stream_telemetry(data: TelemetryData):
     try:
         prediction = predictor.analyze(data)
         analysis_cache[node_pair] = prediction
+        logger.info(
+            "Telemetry ingested link=%s latency_ns=%.2f dropped=%s throughput_kbps=%.2f anomaly=%s",
+            node_pair,
+            data.latency_ns,
+            data.dropped_packets,
+            data.throughput_kbps,
+            prediction.is_anomaly,
+        )
         return prediction
     except Exception as e:
         logger.error(f"Prediction engine failed for key {node_pair}: {str(e)}")
@@ -71,33 +78,3 @@ async def get_latest_analysis():
     Exposes latest predictive evaluations for frontend dashboard polling.
     """
     return analysis_cache
-
-# --- Asynchronous Background C++ Polling Task (Demonstrates non-blocking Async I/O) ---
-async def poll_core_engine_telemetry():
-    """
-    Asynchronous background task simulating real-time polling of the C++ core engine endpoint.
-    Demonstrates how FastAPI manages concurrent async loops on a single thread.
-    """
-    await asyncio.sleep(5) # Delay startup to allow components to settle
-    logger.info("Asynchronous C++ Engine polling loop initialized successfully.")
-    
-    while True:
-        try:
-            # Under a full docker orchestration, we would call:
-            # async with httpx.AsyncClient() as client:
-            #     response = await client.get("http://core-engine:8080/metrics", timeout=0.5)
-            #     metrics = response.json()
-            # For standalone stability during Phase 9 verification, we mock the polling step:
-            await asyncio.sleep(1.0)
-            
-        except asyncio.CancelledError:
-            logger.info("Background telemetry polling loop halted.")
-            break
-        except Exception as e:
-            logger.warning(f"Failed to poll C++ engine: {str(e)}")
-            await asyncio.sleep(2.0)
-
-@app.on_event("startup")
-async def startup_event():
-    # Spawns the background task concurrently on the main event loop
-    asyncio.create_task(poll_core_engine_telemetry())

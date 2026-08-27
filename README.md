@@ -4,7 +4,7 @@ A full-stack network simulator built to connect low-level networking concepts wi
 
 This project models a packet-processing pipeline from the C++ socket layer up to telemetry analysis and a browser dashboard. It is designed as a learning and portfolio project for understanding how networks, operating systems, backend APIs, observability, and deployment fit together in one architecture.
 
-> Current status: the repository contains the C++20 core engine, Python/FastAPI telemetry service, React dashboard, and Docker configuration. Some production-hardening work remains, especially Linux container portability for the kqueue-based C++ event loop and a packet payload implementation mismatch noted below.
+> Current status: the repository contains a runnable end-to-end demo: the C++20 core engine publishes telemetry to the Python/FastAPI service, and the React dashboard visualizes the latest link-health analysis. Docker Compose starts the core, API, and dashboard together for local demonstration.
 
 ## What This Project Demonstrates
 
@@ -16,6 +16,7 @@ This project models a packet-processing pipeline from the C++ socket layer up to
 - Circuit breaker and exponential backoff behavior for link-failure resilience.
 - Lock-free single-producer/single-consumer telemetry queue with cache-line alignment.
 - GCRA-based rate limiting in the packet path.
+- C++ telemetry publisher that POSTs simulation metrics to the FastAPI service.
 - FastAPI telemetry ingestion and Holt's Linear Trend anomaly prediction.
 - React dashboard with Canvas-based topology visualization.
 - Multi-service packaging with Dockerfiles and Docker Compose.
@@ -31,7 +32,8 @@ flowchart LR
     Network --> Guard[Rate Limiter + Memory Arena]
     Guard --> Metrics[Lock-Free Telemetry Queue]
     Metrics --> Monitor[Telemetry Monitor]
-    Monitor --> API[Python FastAPI Service]
+    Monitor --> Publisher[C++ HTTP Telemetry Publisher]
+    Publisher --> API[Python FastAPI Service]
     API --> Predictor[Holt Trend Predictor]
     Predictor --> Dashboard[React Canvas Dashboard]
     Compose[Docker Compose] -. orchestrates .-> Core
@@ -41,13 +43,13 @@ flowchart LR
 
 ### Service Responsibilities
 
-| Layer | Technology | Responsibility |
-| --- | --- | --- |
-| Core engine | C++20 | Socket I/O, packet parsing, subnet logic, routing, rate limiting, fault tolerance, telemetry generation |
-| Telemetry bus | C++20 | Lock-free SPSC queue and background metric aggregation |
-| Intelligence service | Python, FastAPI, Pydantic | Telemetry API, anomaly prediction, latest-analysis cache |
-| Dashboard | React, Vite, Canvas | Real-time topology view, link status, anomaly alerts |
-| Infrastructure | Docker, Docker Compose | Multi-service build and private bridge network |
+| Layer                | Technology                | Responsibility                                                                                          |
+| -------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Core engine          | C++20                     | Socket I/O, packet parsing, subnet logic, routing, rate limiting, fault tolerance, telemetry generation and HTTP publishing |
+| Telemetry bus        | C++20                     | Lock-free SPSC queue and background metric aggregation                                                  |
+| Intelligence service | Python, FastAPI, Pydantic | Telemetry API, anomaly prediction, latest-analysis cache                                                |
+| Dashboard            | React, Vite, Canvas       | Real-time topology view, link status, anomaly alerts                                                    |
+| Infrastructure       | Docker, Docker Compose    | Multi-service build and private bridge network                                                          |
 
 ## Repository Structure
 
@@ -88,23 +90,22 @@ network-simulator-platform/
 
 ## Phase Roadmap
 
-| Phase | Area | What was built |
-| --- | --- | --- |
-| 1 | Communication core | RAII socket wrapper, TCP connection abstraction, non-blocking server |
-| 2 | Packet layer | Binary packet header/payload model and serialization/deserialization |
-| 3 | Link layer | ARP-style IP-to-MAC cache with LRU eviction |
-| 4 | Application protocol | Fragment-tolerant HTTP-like parser using a finite-state machine |
-| 5 | Network layer | IPv4 parsing, subnet masks, CIDR checks, local/remote decision logic |
-| 6 | Routing | Link-state route computation with Dijkstra and LPM route lookup |
-| 7 | Observability | Lock-free telemetry queue and background aggregation thread |
-| 8 | Fault tolerance | Circuit breaker state machine and exponential backoff with jitter |
-| 9 | Traffic control | Atomic GCRA rate limiter and aligned memory arena |
-| 10 | Core daemon | Persistent kqueue-based event loop tying phases 1-9 together |
-| 11 | AI service | FastAPI telemetry API and Holt trend anomaly prediction |
-| 12 | Dashboard | React dashboard with Canvas topology rendering and alert panels |
-| 13 | Orchestration | Dockerfiles and Docker Compose service network |
-| 14 | Future persistence | Planned DBMS-backed telemetry, topology, predictions, and alerts |
-| 15 | Future productionization | Planned tests, CI, auth, health checks, and deployment hardening |
+| Phase | Area                     | What was built                                                       |
+| ----- | ------------------------ | -------------------------------------------------------------------- |
+| 1     | Communication core       | RAII socket wrapper, TCP connection abstraction, non-blocking server |
+| 2     | Packet layer             | Binary packet header/payload model and serialization/deserialization |
+| 3     | Link layer               | ARP-style IP-to-MAC cache with LRU eviction                          |
+| 4     | Application protocol     | Fragment-tolerant HTTP-like parser using a finite-state machine      |
+| 5     | Network layer            | IPv4 parsing, subnet masks, CIDR checks, local/remote decision logic |
+| 6     | Routing                  | Link-state route computation with Dijkstra and LPM route lookup      |
+| 7     | Observability            | Lock-free telemetry queue and background aggregation thread          |
+| 8     | Fault tolerance          | Circuit breaker state machine and exponential backoff with jitter    |
+| 9     | Traffic control          | Atomic GCRA rate limiter and aligned memory arena                    |
+| 10    | Core daemon              | Persistent native async event loop tying phases 1-9 together         |
+| 11    | AI service               | FastAPI telemetry API and Holt trend anomaly prediction              |
+| 12    | Dashboard                | React dashboard with Canvas topology rendering and alert panels      |
+| 13    | Orchestration            | Dockerfiles and Docker Compose service network                       |
+| 14    | Integration demo         | Dockerized C++ to FastAPI telemetry publishing for the dashboard     |
 
 ## Getting Started
 
@@ -116,7 +117,7 @@ network-simulator-platform/
 - Node.js 18+
 - Docker and Docker Compose
 
-The C++ engine uses POSIX networking APIs. The current event loop implementation uses `kqueue`, which is native to macOS/BSD-like systems. Linux support should use an `epoll` backend or a portability layer before the core service is treated as Linux-container-ready.
+The C++ engine uses POSIX networking APIs. The event loop uses `kqueue` on macOS/BSD and `epoll` on Linux. Native Windows support would require a Winsock/event-loop backend, so Windows users should run the core through WSL or Docker.
 
 ### Build and Run the C++ Core
 
@@ -187,8 +188,9 @@ Expected exposed services:
 
 - FastAPI service: `http://localhost:8000`
 - Dashboard via Nginx: `http://localhost:3000`
+- C++ core daemon: `localhost:9090`
 
-Note: the C++ Docker image is currently Ubuntu-based while the event loop uses `kqueue`. Use this Compose setup as the intended orchestration shape; for full Linux container compatibility, add an `epoll` event loop backend or a portability abstraction.
+The C++ core publishes demo telemetry to the FastAPI service through `NETSIM_TELEMETRY_ENDPOINT=http://ai-service:8000/telemetry/stream`, so the dashboard should move from idle state to healthy/anomaly link states after the stack starts.
 
 ## API Overview
 
@@ -233,6 +235,7 @@ Returns the latest cached prediction per source/destination link.
 - `Router::compute_routes` recalculates paths and inflates failed-link costs when a circuit breaker is open.
 - `SpscRingBuffer` uses atomics and cache-line alignment to avoid a mutex in the packet-to-telemetry path.
 - `TelemetryMonitor` drains the queue from a worker thread and computes rolling metrics.
+- `TelemetryHttpClient` posts C++-origin telemetry samples to the FastAPI ingestion endpoint.
 - `GcraRateLimiter` uses compare-and-swap on theoretical arrival time to enforce traffic limits.
 - `MemoryArena` provides fast bump allocation for trivially destructible packet-path objects.
 
@@ -249,15 +252,12 @@ Returns the latest cached prediction per source/destination link.
 - Draws network nodes and link health with HTML5 Canvas.
 - Highlights anomalous links with red dashed styling.
 
-## Known Limitations and Next Steps
+## Known Limitations
 
-- Reconcile `Packet` payload representation: `packet.hpp` uses a fixed `uint8_t payload[1500]`, while `packet.cpp` still contains vector-style payload operations.
-- Add a Linux `epoll` backend or portability abstraction for the C++ event loop.
-- Wire the C++ telemetry monitor to the Python service through a real HTTP or streaming integration path.
+- Native Windows execution for the C++ core is not implemented; use WSL or Docker on Windows.
 - Add persistent storage for telemetry, predictions, topology snapshots, and alerts.
-- Add automated tests for C++ components, FastAPI endpoints, and dashboard rendering states.
-- Add service health checks to Docker Compose.
 - Add authentication and configuration management before exposing the API beyond local development.
+- Add broader automated coverage for FastAPI endpoints and dashboard rendering states.
 
 ## Future DBMS Model Which Can Be Used
 

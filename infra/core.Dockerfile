@@ -21,6 +21,7 @@ WORKDIR /usr/local/bin
 
 # Copy only the compiled target executable from stage 1
 COPY --from=builder /app/build/network_core .
+EXPOSE 9090
 
 # Run as a non-privileged user for production security compliance
 RUN useradd -m -u 1001 appuser

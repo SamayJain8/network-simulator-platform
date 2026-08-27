@@ -1,2 +1,9 @@
 build/
 .DS_Store
+core-engine/build-linux/
+ai-service/.venv/
+dashboard/node_modules/
+dashboard/dist/
+docs/generated/
+docs/DEMO.md
+tools/generate_*.py
